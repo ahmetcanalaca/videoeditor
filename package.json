@@ -1,0 +1,42 @@
+{
+  "name": "video-editor",
+  "productName": "Video Editör",
+  "version": "3.1.0",
+  "description": "Kompakt, çevrimdışı Windows video editörü; isteğe bağlı AI asistanı (yerleşik yerel model dahil) — Compact, offline Windows video editor with an optional AI assistant (built-in local model included)",
+  "main": "src/main/main.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "author": "VideoEditor",
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/static-check.js && node tests/cmdline-limit.js && node tests/media-guard.test.js && node tests/approvals.test.js && node tests/media-tools.test.js && node tests/export.test.js && npm run test:ai",
+    "test:ai": "node tests/agent-ops.test.js && node tests/agent-found.test.js && node tests/ai-agent.test.js && node tests/ai-find.test.js && node tests/ai-providers.test.js && node tests/ai-net.test.js && node tests/ai-local.test.js && node tests/ai-e2e.test.js && node tests/cu-client.test.js && node tests/cu-service.test.js && node tests/cu-proxy.test.js && node tests/ai-cu-agent.test.js && npm run test:llm",
+    "test:llm": "node tests/llm-models.test.js && node tests/llm-server.test.js && node tests/perception.test.js",
+    "test:ui": "node tests/ui-verify.js && node tests/ui-export.js && node tests/ui-misc.js && node tests/ui-corrupt.js && node tests/ui-safety.js && node tests/ui-net-hostile.js && node tests/ui-layout.js && node tests/ui-ai.js && node tests/ui-ai-providers.js && node tests/ui-llm.js && node tests/ui-cu.js && node tests/ui-playback-stress.js 6",
+    "test:local-llm": "node tests/local-llm-trial.js",
+    "test:4k": "node tests/export-4k60.test.js && node tests/ui-4k60.js",
+    "check:lockfile": "node tests/lockfile-check.js",
+    "scan:secrets": "node scripts/secret-scan.js",
+    "verify:package": "node scripts/verify-package.js",
+    "ffmpeg:fetch": "node scripts/fetch-ffmpeg.js",
+    "llama:fetch": "node scripts/fetch-llama.js",
+    "nsis:fetch": "node scripts/fetch-nsis.js",
+    "installer": "node scripts/fetch-nsis.js && node scripts/make-installer.js",
+    "release": "npm run package && npm run installer",
+    "test:installer": "node tests/installer-test.js",
+    "test:live": "node tests/ui-llm-live.js",
+    "test:net": "node tests/net-observe.js",
+    "icons": "node scripts/make-icons.js",
+    "docs:shots": "node scripts/annotate-screenshots.js",
+    "package": "node scripts/fetch-ffmpeg.js && node scripts/fetch-llama.js && node scripts/package.js"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "@electron/packager": "^20.3.0",
+    "electron": "45.2.1"
+  },
+  "overrides": {
+    "glob": "14.0.3",
+    "minimatch": "11.0.4"
+  }
+}

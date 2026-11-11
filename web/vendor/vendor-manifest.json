@@ -1,0 +1,14 @@
+{
+  "packages": [
+    {
+      "name": "mediabunny",
+      "version": "1.65.1",
+      "license": "MPL-2.0",
+      "source": "https://github.com/Vanilagy/mediabunny",
+      "files": [
+        { "from": "dist/bundles/mediabunny.min.mjs", "to": "mediabunny/mediabunny.min.mjs" },
+        { "from": "LICENSE", "to": "mediabunny/LICENSE" }
+      ]
+    }
+  ]
+}

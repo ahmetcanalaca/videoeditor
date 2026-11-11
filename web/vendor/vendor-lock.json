@@ -1,0 +1,24 @@
+{
+  "generatedBy": "scripts/vendor.js",
+  "packages": [
+    {
+      "name": "mediabunny",
+      "version": "1.65.1",
+      "license": "MPL-2.0",
+      "tarballIntegrity": "sha512-SDyhXooCNd8TYKNLf9jC4o/0I0MTft1pYc5/k4ztkKbGEMvcbYXWrAri5SozEu7DHI8PsG9IfN9XwKmPOg/VkQ==",
+      "source": "https://github.com/Vanilagy/mediabunny",
+      "files": [
+        {
+          "path": "mediabunny/mediabunny.min.mjs",
+          "sha256": "3cc850d9ceae2fa553de4106f4b067d6469b8b4de2255806312999fbe70d8699",
+          "bytes": 723685
+        },
+        {
+          "path": "mediabunny/LICENSE",
+          "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+          "bytes": 16726
+        }
+      ]
+    }
+  ]
+}

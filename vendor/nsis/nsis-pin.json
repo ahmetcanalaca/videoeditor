@@ -1,0 +1,16 @@
+{
+  "name": "NSIS (Nullsoft Scriptable Install System), zlib/libpng-style licence: makensis, the BUILD-TIME tool that compiles the installer (scripts/make-installer.js). It is not part of the application.",
+  "version": "3.11",
+  "folder": "nsis-3.11",
+  "asset": {
+    "url": "https://sourceforge.net/projects/nsis/files/NSIS%203/3.11/nsis-3.11.zip/download",
+    "size": 2361546,
+    "zipSha256": "c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1",
+    "zipMd5": "b7c063bee3afc8127dca0fd64c4e22ce"
+  },
+  "zipSha256Sources": [
+    "zipMd5 and size: the SourceForge release feed https://sourceforge.net/projects/nsis/rss?path=/NSIS%203/3.11 (independent of the download mirror)",
+    "zipSha256: computed from the download that matched that MD5 and size"
+  ],
+  "treeSha256": "1416bf87965e99fbe6a4d3d7c7c0fa45125b61306a062f583ca09c25ea536e3f"
+}

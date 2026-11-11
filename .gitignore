@@ -1,0 +1,32 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+
+# FFmpeg programs fetched by `npm run ffmpeg:fetch` (the pin file next to them IS committed)
+vendor/ffmpeg/bin/
+vendor/ffmpeg/LICENSE
+vendor/ffmpeg/README.txt
+
+# llama.cpp runtime of the built-in local model, fetched by `npm run llama:fetch` (the pin file next to it IS committed)
+vendor/llama/cpu/
+vendor/llama/vk/
+vendor/llama/LICENSE
+
+# NSIS compiler used only at build time to make the installer, fetched by `npm run nsis:fetch` (the pin file next to it IS committed)
+vendor/nsis/nsis-*/
+
+# Generated test artifacts (contain local absolute paths, screenshots, sample videos)
+tests/out/
+tests/fixtures/
+tests/pilot/coco_vlm/
+
+# Local/editor files
+.env
+.env.*
+*.log
+*.tmp
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

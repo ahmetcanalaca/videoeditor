@@ -1,0 +1,79 @@
+/* Theme tokens. Dark is the default; light is applied with data-theme="light" on <html>. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0f13;
+  --bg-elev: #13161c;
+  --bg-elev-2: #1a1e26;
+  --bg-input: #171b22;
+  --bg-hover: #212633;
+  --bg-active: #2b3243;
+  --border: #232834;
+  --border-strong: #343b4c;
+  --text: #e8ebf2;
+  --text-dim: #a0a9bb;
+  --text-faint: #6c7589;
+  --accent: #4a82ff;
+  --accent-hover: #6b98ff;
+  --accent-text: #86aaff;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(74, 130, 255, 0.18);
+  --danger: #ff5d6c;
+  --success: #3ddc97;
+  --warning: #ffb454;
+  --stage-bg: #090b0e;
+  --track-bg: #0e1117;
+  --ruler-bg: #11141a;
+  --ruler-text: #8b94a8;
+  --ruler-tick: #3a4152;
+  --titlebar-bg: #12151b;
+  --playhead: #ff4d5e;
+  --seg-s: 36%;
+  --seg-l: 25%;
+  --seg-edge: rgba(255, 255, 255, 0.14);
+  --wave: rgba(255, 255, 255, 0.85);
+  --wave-band: rgba(0, 0, 0, 0.38);
+  --label-bg: rgba(8, 10, 14, 0.62);
+  --label-fg: #f2f4f8;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --scrim: rgba(4, 6, 10, 0.62);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eceef3;
+  --bg-elev: #f7f8fb;
+  --bg-elev-2: #ffffff;
+  --bg-input: #ffffff;
+  --bg-hover: #e8ebf2;
+  --bg-active: #dbe0ec;
+  --border: #dde1ea;
+  --border-strong: #c3cad9;
+  --text: #1d2330;
+  --text-dim: #566075;
+  --text-faint: #8791a5;
+  --accent: #2f6df6;
+  --accent-hover: #1f5be0;
+  --accent-text: #2459d6;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(47, 109, 246, 0.12);
+  --danger: #d6293f;
+  --success: #12a06a;
+  --warning: #c77a0a;
+  --stage-bg: #dde1ea;
+  --track-bg: #e3e6ee;
+  --ruler-bg: #eef0f5;
+  --ruler-text: #5d6679;
+  --ruler-tick: #b3bac9;
+  --titlebar-bg: #f7f8fb;
+  --playhead: #e5334a;
+  --seg-s: 42%;
+  --seg-l: 76%;
+  --seg-edge: rgba(0, 0, 0, 0.16);
+  --wave: rgba(18, 28, 48, 0.78);
+  --wave-band: rgba(255, 255, 255, 0.55);
+  --label-bg: rgba(255, 255, 255, 0.72);
+  --label-fg: #1b2230;
+  --shadow: 0 10px 28px rgba(30, 42, 70, 0.18);
+  --scrim: rgba(30, 38, 56, 0.4);
+}

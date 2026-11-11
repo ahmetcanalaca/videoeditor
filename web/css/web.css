@@ -1,0 +1,25 @@
+/* Web edition only: the themed message box (the desktop app uses a native one) and the notice for browsers that cannot run the editor. */
+dialog.ve-msgbox {
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  padding: 0;
+  width: min(520px, 92vw);
+  box-shadow: var(--shadow);
+}
+dialog.ve-msgbox::backdrop { background: var(--scrim); }
+.ve-msgbox .mb-body { padding: 18px 20px 6px; display: flex; flex-direction: column; gap: 8px; }
+.ve-msgbox .mb-title { font-weight: 700; font-size: 14px; }
+.ve-msgbox .mb-msg { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.ve-msgbox .mb-detail { color: var(--text-dim); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
+.ve-msgbox .mb-foot { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 16px 16px; }
+
+#web-unsupported {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center;
+  background: var(--bg); color: var(--text);
+}
+#web-unsupported .box { max-width: 520px; display: flex; flex-direction: column; gap: 10px; }
+#web-unsupported b { font-size: 18px; }
+#web-unsupported .hint { color: var(--text-dim); }

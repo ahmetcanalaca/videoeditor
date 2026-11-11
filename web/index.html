@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="tr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <!-- Static site: no inline script or style, no eval; models come from huggingface.co only when the user asks for them (see docs/SECURITY.md). The service worker adds the
+       same policy as a real HTTP header plus frame-ancestors, which a <meta> tag cannot express. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co https://raw.githubusercontent.com http://localhost:* http://127.0.0.1:*; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d0f13">
+  <meta name="color-scheme" content="dark light">
+  <title>Video Editör</title>
+  <link rel="icon" type="image/png" href="assets/icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/web.css">
+  <script src="js/web/env.js"></script>
+  <script src="js/web/api.js"></script>
+  <script src="js/boot.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="titlebar">
+      <div class="brand">
+        <span class="logo" data-icon="logo"></span>
+        <span class="brand-name" data-i18n="app.title">Video Editör</span>
+      </div>
+      <div class="tb-group">
+        <button class="btn icon" id="btn-new" data-icon="filePlus" data-i18n-title="tb.new"></button>
+        <button class="btn icon" id="btn-add" data-icon="filmPlus" data-i18n-title="tb.add"></button>
+        <button class="btn icon" id="btn-open" data-icon="folder" data-i18n-title="tb.openProject"></button>
+        <button class="btn icon" id="btn-save" data-icon="save" data-i18n-title="tb.saveProject"></button>
+        <span class="tb-sep"></span>
+        <button class="btn icon" id="btn-undo" data-icon="undo" data-i18n-title="tb.undo"></button>
+        <button class="btn icon" id="btn-redo" data-icon="redo" data-i18n-title="tb.redo"></button>
+      </div>
+      <div class="tb-title"><span id="project-name"></span></div>
+      <div class="tb-right">
+        <div class="seg-control" id="lang-switch" role="group" data-i18n-aria="tb.language">
+          <button data-lang="tr" aria-pressed="true">TR</button>
+          <button data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <button class="btn icon" id="btn-theme" data-i18n-title="tb.theme"><span data-icon="moon"></span></button>
+        <button class="btn icon" id="btn-about" data-icon="info" data-i18n-title="tb.about"></button>
+        <button class="btn ai-toggle off" id="btn-ai" aria-pressed="false" aria-controls="ai-pane" data-state="off" data-i18n-title="ai.toggle" hidden><span data-icon="sparkles"></span><span class="ai-toggle-label">AI</span></button>
+        <button class="btn primary" id="btn-export"><span data-icon="export"></span><span data-i18n="tb.export">Dışa aktar</span></button>
+      </div>
+    </header>
+
+    <div id="main">
+      <section id="preview-pane">
+        <div id="stage">
+          <div id="canvas">
+            <div class="deck" id="deck-a"><video preload="auto" playsinline disablepictureinpicture></video></div>
+            <div class="deck" id="deck-b"><video preload="auto" playsinline disablepictureinpicture></video></div>
+            <div id="fade-overlay"></div>
+            <div id="empty-state">
+              <div class="empty-art" data-icon="film"></div>
+              <div class="empty-title" data-i18n="empty.title">Videolarınızı buraya sürükleyin</div>
+              <div class="empty-sub" data-i18n="empty.sub">MP4, MOV, MKV, AVI, WebM ve daha fazlası</div>
+              <button class="btn primary big" id="btn-add-empty"><span data-icon="filmPlus"></span><span data-i18n="tb.add">Video ekle</span></button>
+            </div>
+            <div id="proxy-badge" hidden></div>
+          </div>
+        </div>
+        <div id="transport">
+          <div class="tp-left">
+            <button class="btn icon" id="btn-start" data-icon="skipBack" data-i18n-title="tp.toStart"></button>
+            <button class="btn icon" id="btn-step-back" data-icon="chevLeft" data-i18n-title="tp.stepBack"></button>
+            <button class="btn icon play" id="btn-play" data-icon="play" data-i18n-title="tp.play"></button>
+            <button class="btn icon" id="btn-step-fwd" data-icon="chevRight" data-i18n-title="tp.stepFwd"></button>
+            <button class="btn icon" id="btn-end" data-icon="skipFwd" data-i18n-title="tp.toEnd"></button>
+          </div>
+          <div class="timecode"><span id="tc-cur">00:00.00</span><span class="tc-sep">/</span><span id="tc-total">00:00.00</span></div>
+          <div class="tp-right">
+            <button class="btn icon" id="btn-mute" data-icon="volume" data-i18n-title="tp.volume"></button>
+            <input type="range" id="vol-range" min="0" max="100" value="100" data-i18n-title="tp.volume">
+          </div>
+        </div>
+      </section>
+
+      <aside id="inspector">
+        <div id="insp-empty" class="insp-empty">
+          <div class="insp-empty-art" data-icon="sliders"></div>
+          <div data-i18n="insp.empty">Düzenlemek için zaman çizelgesinden bir klip seçin.</div>
+        </div>
+        <div id="insp-body" hidden>
+          <section class="card">
+            <div class="clip-head">
+              <span class="swatch" id="clip-swatch"></span>
+              <div class="clip-title">
+                <div class="clip-name" id="clip-name"></div>
+                <div class="clip-meta" id="clip-meta"></div>
+              </div>
+            </div>
+            <div class="kv"><span data-i18n="insp.source">Kaynak</span><b id="clip-range"></b></div>
+            <div class="kv"><span data-i18n="insp.length">Süre</span><b id="clip-length"></b></div>
+          </section>
+
+          <section class="card">
+            <h3><span data-icon="gauge"></span><span data-i18n="insp.speed">Hız</span><output id="speed-out">1×</output></h3>
+            <input type="range" id="speed-range" min="0" max="1000" value="400">
+            <div class="chips" id="speed-chips"></div>
+          </section>
+
+          <section class="card">
+            <h3><span data-icon="zoom"></span><span data-i18n="insp.zoom">Yakınlaştırma</span></h3>
+            <div class="chips" id="zoom-presets">
+              <button class="chip" data-zoom="none" data-i18n="insp.zoomNone">Yok</button>
+              <button class="chip" data-zoom="in" data-i18n="insp.zoomIn">Yakınlaş</button>
+              <button class="chip" data-zoom="out" data-i18n="insp.zoomOut">Uzaklaş</button>
+              <button class="chip" data-zoom="hold" data-i18n="insp.zoomHold">Sabit</button>
+            </div>
+            <div class="slider-row"><label data-i18n="insp.zoomStart">Başlangıç</label><input type="range" id="zoom-from" min="1" max="4" step="0.05" value="1"><output id="zoom-from-out">1.00×</output></div>
+            <div class="slider-row"><label data-i18n="insp.zoomEnd">Bitiş</label><input type="range" id="zoom-to" min="1" max="4" step="0.05" value="1"><output id="zoom-to-out">1.00×</output></div>
+            <div class="focus-label"><span data-icon="crosshair"></span><span data-i18n="insp.focus">Odak noktası</span></div>
+            <div id="focus-picker" class="focus-picker">
+              <img id="focus-img" alt="">
+              <div class="focus-rect from" id="focus-rect-from"></div>
+              <div class="focus-rect to" id="focus-rect-to"></div>
+              <div class="focus-dot" id="focus-dot"></div>
+            </div>
+            <div class="hint" data-i18n="insp.focusHint">Yakınlaştırılacak noktayı sürükleyerek seçin.</div>
+          </section>
+
+          <section class="card">
+            <h3><span data-icon="volume"></span><span data-i18n="insp.audio">Ses</span><output id="vol-out">100%</output></h3>
+            <input type="range" id="clip-volume" min="0" max="200" step="1" value="100">
+            <label class="check"><input type="checkbox" id="clip-mute"><span data-i18n="insp.mute">Sessiz</span></label>
+            <div class="hint" id="noaudio-hint" data-i18n="insp.noAudio" hidden>Bu videoda ses yok.</div>
+            <div class="hint" id="vol-hint" data-i18n="insp.volPreview" hidden>Önizleme en fazla %100 çalar; dışa aktarmada tam değer uygulanır.</div>
+          </section>
+
+          <section class="card">
+            <h3><span data-icon="fade"></span><span data-i18n="insp.fade">Solma</span></h3>
+            <div class="slider-row"><label data-i18n="insp.fadeIn">Girişte</label><input type="range" id="fade-in" min="0" max="3" step="0.1" value="0"><output id="fade-in-out">0.0 s</output></div>
+            <div class="slider-row"><label data-i18n="insp.fadeOut">Çıkışta</label><input type="range" id="fade-out" min="0" max="3" step="0.1" value="0"><output id="fade-out-out">0.0 s</output></div>
+          </section>
+
+          <button class="btn wide" id="btn-reset-clip"><span data-icon="reset"></span><span data-i18n="insp.reset">Klibi sıfırla</span></button>
+        </div>
+      </aside>
+
+      <aside id="ai-pane" class="ai-pane" hidden aria-label="AI">
+        <header class="ai-head">
+          <span class="ai-head-icon" data-icon="sparkles"></span>
+          <b class="ai-title" data-i18n="ai.title">AI Asistan</b>
+          <span class="ai-state" id="ai-state"></span>
+          <span class="spacer"></span>
+          <button class="btn icon" id="ai-stop-model" data-icon="power" data-i18n-title="ai.stopModel" hidden></button>
+          <button class="btn icon" id="ai-settings" data-icon="gear" data-i18n-title="ai.settings"></button>
+          <button class="btn icon" id="ai-close" data-icon="close" data-i18n-title="ai.close"></button>
+        </header>
+        <div class="ai-banner" id="ai-banner" hidden>
+          <div class="ai-banner-icon" id="ai-banner-icon" data-icon="key"></div>
+          <b id="ai-banner-title"></b>
+          <div id="ai-banner-text"></div>
+          <button class="btn primary" id="ai-banner-btn"><span id="ai-banner-btn-icon" data-icon="key"></span><span id="ai-banner-btn-label"></span></button>
+        </div>
+        <div class="ai-log" id="ai-log" role="log" aria-live="polite"></div>
+        <footer class="ai-foot">
+          <div class="ai-undo-row" id="ai-undo-row" hidden>
+            <button class="btn outline" id="ai-undo"><span data-icon="undo"></span><span data-i18n="ai.undo">Geri al</span></button>
+          </div>
+          <div class="ai-input-row">
+            <textarea id="ai-input" rows="1" maxlength="2000" spellcheck="false" data-i18n-aria="ai.inputLabel"></textarea>
+            <button class="btn icon" id="ai-send" data-icon="send" data-i18n-title="ai.send"></button>
+          </div>
+          <div class="ai-note" data-i18n="ai.note">AI yanılabilir; sonucu kontrol edin. Her istek tek adımda geri alınır (Ctrl+Z).</div>
+        </footer>
+      </aside>
+    </div>
+
+    <section id="timeline-pane">
+      <div id="tl-toolbar">
+        <button class="btn" id="btn-split"><span data-icon="scissors"></span><span data-i18n="tl.split">Böl</span><kbd>S</kbd></button>
+        <button class="btn" id="btn-delete"><span data-icon="trash"></span><span data-i18n="tl.delete">Sil</span><kbd>Del</kbd></button>
+        <button class="btn icon" id="btn-duplicate" data-icon="copy" data-i18n-title="tl.duplicate"></button>
+        <span class="tb-sep"></span>
+        <button class="btn icon" id="btn-trim-start" data-icon="trimStart" data-i18n-title="tl.trimStart"></button>
+        <button class="btn icon" id="btn-trim-end" data-icon="trimEnd" data-i18n-title="tl.trimEnd"></button>
+        <span class="tb-sep"></span>
+        <button class="btn icon" id="btn-move-left" data-icon="arrowLeft" data-i18n-title="tl.moveLeft"></button>
+        <button class="btn icon" id="btn-move-right" data-icon="arrowRight" data-i18n-title="tl.moveRight"></button>
+        <div class="spacer"></div>
+        <button class="btn icon" id="btn-tl-out" data-icon="zoomOut" data-i18n-title="tl.zoomOut"></button>
+        <input type="range" id="tl-zoom" min="0" max="1000" value="500" data-i18n-title="tl.zoom">
+        <button class="btn icon" id="btn-tl-in" data-icon="zoomIn" data-i18n-title="tl.zoomIn"></button>
+        <button class="btn icon" id="btn-tl-fit" data-icon="fit" data-i18n-title="tl.fit"></button>
+      </div>
+      <div id="tl-body">
+        <div id="tl-scroll">
+          <div id="tl-content">
+            <canvas id="tl-ruler"></canvas>
+            <div id="tl-track"></div>
+            <div id="tl-drop"></div>
+            <div id="tl-empty" data-i18n="tl.empty">Zaman çizelgesi boş — video ekleyin veya sürükleyip bırakın.</div>
+            <div id="tl-playhead"><div class="ph-head"></div><div class="ph-line"></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer id="statusbar">
+      <span id="status-text"></span>
+      <span class="spacer"></span>
+      <span id="status-info"></span>
+    </footer>
+  </div>
+
+  <div id="drop-overlay"><div class="drop-box"><span data-icon="filmPlus"></span><span data-i18n="drop.hint">Eklemek için videoları bırakın</span></div></div>
+  <div id="toasts"></div>
+  <div id="modal-root"></div>
+
+  <script src="js/shared/model.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/web/i18n-web.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/timeline.js"></script>
+  <script src="js/inspector.js"></script>
+  <script src="js/exportui.js"></script>
+  <script src="js/llmui.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/app.js"></script>
+  <noscript>This editor needs JavaScript. / Bu düzenleyici JavaScript gerektirir.</noscript>
+</body>
+</html>
