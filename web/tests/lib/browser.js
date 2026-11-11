@@ -108,6 +108,8 @@ async function launch(opts) {
     '--window-size=' + (o.width || 1366) + ',' + (o.height || 820),
   ];
   if (o.headless !== false) args.push('--headless=new');
+  // extra flags for the environment (CI: VE_BROWSER_FLAGS=--no-sandbox, a hosted runner does not allow the browser's own sandbox)
+  (process.env.VE_BROWSER_FLAGS || '').split(/\s+/).filter(Boolean).forEach((a) => args.push(a));
   (o.args || []).forEach((a) => args.push(a));
   args.push('about:blank');
   const child = spawn(exe, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: false });
