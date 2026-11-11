@@ -244,7 +244,8 @@ async function downloadChecks() {
     reset();
     srv.routes['/cdn/model.bin'] = (req, res) => { res.writeHead(403); res.end('blocked by the proxy'); };
     r = await run(dataF);
-    check('20 a refused download (a proxy or firewall) gives exit code 2, says so, and tells how to download by hand (address and folder)', r.code === 2 && /refused the download \(403\)/.test(r.out) && r.out.includes(srv.base + '/model.bin') && r.out.includes(path.join(dataF, 'models', 'qwen3.5-4b')), { code: r.code, out: r.out.slice(-900) });
+    // (on a Windows runner os.tmpdir() is an 8.3 short path while PowerShell prints the long one: compare from the folder's own name on)
+    check('20 a refused download (a proxy or firewall) gives exit code 2, says so, and tells how to download by hand (address and folder)', r.code === 2 && /refused the download \(403\)/.test(r.out) && r.out.includes(srv.base + '/model.bin') && r.out.includes(path.join(path.basename(dataF), 'models', 'qwen3.5-4b')), { code: r.code, out: r.out.slice(-900) });
     check('21 a refused download is not retried over and over', srv.log.filter((e) => e.url === '/cdn/model.bin').length === 1, srv.log.filter((e) => e.url === '/cdn/model.bin').length);
 
     // other data in the folder of a -Remove

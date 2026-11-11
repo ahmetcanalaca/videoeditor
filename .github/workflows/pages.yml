@@ -21,14 +21,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
+# Only deployments are serialized (see the deploy job): a slow or stuck test job must never hold up the publication of the next change.
 
 jobs:
   build:
     name: Verify and build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write # signs the build attestation of the helper zip (see the step after the build)
@@ -71,6 +70,7 @@ jobs:
     # Windows PowerShell 5.1. The tests with the real model are skipped here (the model is not on the runner).
     name: Local AI helper tests (informational)
     runs-on: windows-latest
+    timeout-minutes: 20
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,6 +88,7 @@ jobs:
     # hosted runner does not always provide in the same way as a desktop, so they report but do not block the publication.
     name: Browser tests (informational)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,7 +98,8 @@ jobs:
         with:
           node-version: '22'
       - name: ffmpeg for the test videos
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        timeout-minutes: 10
+        run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg
       - name: Smoke, UI, assistant and offline (service worker) tests
         working-directory: web
         run: node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/lna.test.js && node tests/pwa.test.js
@@ -117,6 +119,10 @@ jobs:
     # only the main branch is ever published (a manual run from another branch builds but does not deploy)
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write
