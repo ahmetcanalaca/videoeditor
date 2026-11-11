@@ -1,7 +1,9 @@
 Video Editör (web edition) - third-party components
 =====================================================
 
-The web edition is MIT-licensed (see LICENSE). It loads no code from any CDN: every library below is copied, unmodified, from its npm
+The web edition is MIT-licensed (see LICENSE). That licence covers the source code of this repository (the desktop application in src/ and the web edition in
+web/); third-party components keep their own licences: those of the web edition are listed below, those of the desktop build (FFmpeg, llama.cpp, the models) in
+the "Lisanslar / Licences" notes of README.md. The web edition loads no code from any CDN: every library below is copied, unmodified, from its npm
 package into web/vendor/ and pinned by SHA-256 in web/vendor/vendor-lock.json (checked on every build, `node scripts/vendor.js verify`).
 
 
