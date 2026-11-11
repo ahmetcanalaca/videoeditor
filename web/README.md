@@ -112,4 +112,5 @@ browser APIs. The editing model and the assistant's brain (`js/shared/`, `js/web
 ### Publish your own copy
 
 Fork the repository → *Settings → Pages → Source: GitHub Actions* → push to `main`. The workflow `.github/workflows/pages.yml`
-verifies the vendored libraries, builds `web/_site` and deploys it. A project site lives under `/<repository name>/`; all URLs in the site are relative.
+verifies the vendored libraries, builds `web/_site`, attests the helper zip and deploys it (the Local AI helper tests run next to it on Windows, informational). A project site lives under `/<repository name>/`; all URLs in the site are relative.
+The browser tests above are not run on every push (a hosted runner has no ffmpeg and no reliable package mirror); `.github/workflows/browser-tests.yml` starts them by hand, and `npm test` runs them on your own computer.

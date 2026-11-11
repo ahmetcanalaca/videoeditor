@@ -1,0 +1,48 @@
+name: Browser tests (manual)
+
+# The real-browser tests of the web edition (UI, assistant, Foundry + Content Understanding against a mock, Local Network Access, offline / service worker,
+# export). Start them by hand: Actions > Browser tests (manual) > Run workflow. They are not part of the publication workflow: a hosted runner has no
+# ffmpeg (the test videos and the measuring of the results need it) and its Ubuntu package mirror was not reachable when this was set up, so a job on every
+# push would only be a red mark. The same tests run on your own computer: `cd web && npm test`.
+# Every action is pinned to a commit (the tag is in the comment); Dependabot proposes updates (see ../dependabot.yml).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-tests:
+    name: Browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: ffmpeg for the test videos
+        timeout-minutes: 5
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq || true
+            sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq --no-install-recommends ffmpeg
+          fi
+          command -v ffmpeg ffprobe google-chrome
+      - name: Smoke, UI, assistant, Foundry, Local Network Access and offline (service worker) tests
+        working-directory: web
+        run: node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/lna.test.js && node tests/pwa.test.js
+        env:
+          VE_FFMPEG: /usr/bin/ffmpeg
+          VE_FFPROBE: /usr/bin/ffprobe
+          VE_BROWSER_FLAGS: --no-sandbox
+      - name: Export tests
+        working-directory: web
+        run: node tests/export.test.js
+        env:
+          VE_FFMPEG: /usr/bin/ffmpeg
+          VE_FFPROBE: /usr/bin/ffprobe
+          VE_BROWSER_FLAGS: --no-sandbox

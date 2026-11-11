@@ -83,44 +83,6 @@ jobs:
         working-directory: web
         run: node tests/local-ai.test.js
 
-  browser-tests:
-    # Real-browser tests (UI, assistant, offline/service worker, export). They need a Chrome with WebCodecs and ffmpeg for the test videos, which a
-    # hosted runner does not always provide in the same way as a desktop, so they report but do not block the publication.
-    name: Browser tests (informational)
-    # (ubuntu-24.04, not ubuntu-latest: the newest image could not reach its package mirror, and this one has Chrome and a working apt)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-      - name: ffmpeg for the test videos
-        timeout-minutes: 5
-        run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq || true
-            sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq --no-install-recommends ffmpeg
-          fi
-          command -v ffmpeg ffprobe google-chrome
-      - name: Smoke, UI, assistant and offline (service worker) tests
-        working-directory: web
-        run: node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/lna.test.js && node tests/pwa.test.js
-        env:
-          VE_FFMPEG: /usr/bin/ffmpeg
-          VE_FFPROBE: /usr/bin/ffprobe
-          VE_BROWSER_FLAGS: --no-sandbox
-      - name: Export tests
-        working-directory: web
-        run: node tests/export.test.js
-        env:
-          VE_FFMPEG: /usr/bin/ffmpeg
-          VE_FFPROBE: /usr/bin/ffprobe
-          VE_BROWSER_FLAGS: --no-sandbox
-
   deploy:
     name: Deploy
     needs: build
