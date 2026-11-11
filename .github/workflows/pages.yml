@@ -1,0 +1,128 @@
+name: Web edition (GitHub Pages)
+
+# Builds the static web edition in web/ and publishes it with GitHub Pages.
+# Every action is pinned to a commit (the tag is in the comment); Dependabot proposes updates (see ../dependabot.yml).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/pages.yml'
+      # the web edition bundles code of the desktop app and pins the same downloads: a change there must be regenerated (sync-desktop --check fails otherwise)
+      - 'src/shared/**'
+      - 'src/main/ai/**'
+      - 'src/main/perception/**'
+      - 'src/main/llm/catalog.js'
+      - 'vendor/llama/llama-pin.json'
+      - 'LICENSE'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Verify and build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # signs the build attestation of the helper zip (see the step after the build)
+      attestations: write # stores it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Vendored libraries are exactly the pinned ones
+        working-directory: web
+        run: node scripts/vendor.js verify
+      - name: The copies of the desktop code and the pins of the Local AI helper are current
+        working-directory: web
+        run: node scripts/sync-desktop.js --check
+      - name: Audio DSP and assistant core unit tests
+        working-directory: web
+        run: node tests/audio-dsp.test.js && node tests/ai-core.test.js
+      - name: Build the site
+        working-directory: web
+        run: node scripts/build.js
+      # The Local AI helper is a script that people run on their own computer. The exact zip this run publishes is attested (signed build provenance, Sigstore,
+      # through GitHub), so anybody can check the file they downloaded, whatever the page says:
+      #   gh attestation verify VideoEditor-LocalAI.zip --repo <owner>/<repo> --signer-workflow <owner>/<repo>/.github/workflows/pages.yml --source-ref refs/heads/main
+      # (only the main branch is ever deployed, so only a run on main attests)
+      - name: Attest where the Local AI helper zip was built
+        if: github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: web/_site/local-ai/VideoEditor-LocalAI.zip
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: web/_site
+
+  helper-tests:
+    # The Local AI helper is a Windows PowerShell script: its checks (pins, zip, downloads with resume against a local mock server, hashes) need
+    # Windows PowerShell 5.1. The tests with the real model are skipped here (the model is not on the runner).
+    name: Local AI helper tests (informational)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Helper tests
+        working-directory: web
+        run: node tests/local-ai.test.js
+
+  browser-tests:
+    # Real-browser tests (UI, assistant, offline/service worker, export). They need a Chrome with WebCodecs and ffmpeg for the test videos, which a
+    # hosted runner does not always provide in the same way as a desktop, so they report but do not block the publication.
+    name: Browser tests (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: ffmpeg for the test videos
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Smoke, UI, assistant and offline (service worker) tests
+        working-directory: web
+        run: node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/lna.test.js && node tests/pwa.test.js
+        env:
+          VE_FFMPEG: /usr/bin/ffmpeg
+          VE_FFPROBE: /usr/bin/ffprobe
+      - name: Export tests
+        working-directory: web
+        run: node tests/export.test.js
+        env:
+          VE_FFMPEG: /usr/bin/ffmpeg
+          VE_FFPROBE: /usr/bin/ffprobe
+
+  deploy:
+    name: Deploy
+    needs: build
+    # only the main branch is ever published (a manual run from another branch builds but does not deploy)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

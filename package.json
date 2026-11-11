@@ -5,7 +5,7 @@
   "description": "Kompakt, çevrimdışı Windows video editörü; isteğe bağlı AI asistanı (yerleşik yerel model dahil) — Compact, offline Windows video editor with an optional AI assistant (built-in local model included)",
   "main": "src/main/main.js",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "author": "VideoEditor",
   "scripts": {
     "start": "electron .",

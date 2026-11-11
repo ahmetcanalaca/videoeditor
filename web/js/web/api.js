@@ -11,6 +11,7 @@
   var LS_KEY = 've.web.settings.v1';
   var VIDEO_EXTS = ['.mp4', '.m4v', '.mov', '.mkv', '.webm', '.avi', '.wmv', '.flv', '.mpg', '.mpeg', '.ts', '.m2ts', '.mts', '.3gp', '.ogv', '.vob', '.mxf'];
   var MAX_PROJECT_BYTES = 50 * 1024 * 1024;
+  var MEMORY_EXPORT_LIMIT = 1.2 * 1024 * 1024 * 1024; // a finished video that is built in memory (no file picker in this browser) must stay below this
 
   /* ---------------------------------------------------------------- settings */
 
@@ -124,6 +125,20 @@
   }
   function pathForFile(file) { return file && typeof file.name === 'string' ? tokenFor(file, null) : ''; }
 
+  // Files dropped on the page: Chrome / Edge can also give out their file handles. They are only used to recognise "the output file is one of
+  // the source videos" (see isSourceOf); everything else works from the File itself.
+  var handleByKey = new Map();
+  window.addEventListener('drop', function (e) {
+    var items = e.dataTransfer && e.dataTransfer.items;
+    if (!items) return;
+    Array.prototype.forEach.call(items, function (item) {
+      if (item.kind !== 'file' || typeof item.getAsFileSystemHandle !== 'function') return;
+      var f = item.getAsFile();
+      var p = item.getAsFileSystemHandle();
+      if (f && p && typeof p.then === 'function') p.then(function (h) { if (h && h.kind === 'file') handleByKey.set([f.name, f.size, f.lastModified].join('|'), h); }, function () {});
+    });
+  }, true);
+
   function pickViaInput(accept, multiple) {
     return new Promise(function (resolve) {
       var input = document.createElement('input');
@@ -139,7 +154,10 @@
 
   // -> [{ file, handle }] ([] when the user cancelled)
   async function pickFiles(kind, multiple) {
-    if (VEW.test && window.__veTest && Array.isArray(window.__veTest[kind])) return window.__veTest[kind].map(function (f) { return { file: f, handle: null }; });
+    if (VEW.test && window.__veTest && Array.isArray(window.__veTest[kind])) {
+      var hs = window.__veTest.handles;
+      return window.__veTest[kind].map(function (f) { return { file: f, handle: (hs && hs.get && hs.get(f)) || null }; });
+    }
     var accept = kind === 'project' ? { 'application/json': ['.vedproj'] } : { 'video/*': VIDEO_EXTS };
     if (VEW.caps.fileSystemAccess) {
       try {
@@ -178,6 +196,9 @@
 
   VEW.mediaUrl = function (id) { var e = registry.get(id); return e ? e.objectUrl : ''; };
   VEW.thumbUrl = function (id, index) { var e = registry.get(id); return (e && e.thumbUrls.get(index)) || ''; };
+  // for the assistant (js/web/ai/): the description of a media and the user's own File (read-only use: pictures of the video, a reduced copy for the analysis)
+  VEW.getMedia = function (id) { var e = registry.get(id); return e ? { info: e.info, file: e.file } : null; };
+  VEW.emit = function (channel, payload) { emit(channel, payload); };
 
   // background work (thumbnails, waveform) runs two at a time
   var queue = [];
@@ -287,10 +308,26 @@
     return n || fallback;
   }
 
+  async function isSourceOf(target, entries) {
+    if (!target || !target.handle) return false; // nothing is written to an existing file without a handle
+    var existing = null;
+    try { existing = await target.handle.getFile(); } catch (e) { existing = null; }
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      var h = e.handle || handleByKey.get(e.key) || null;
+      if (h && typeof h.isSameEntry === 'function') {
+        try { if (await h.isSameEntry(target.handle)) return true; } catch (err) { /* not comparable: use the fallback */ }
+      }
+      if (existing && existing.size > 0 && existing.name === e.file.name && existing.size === e.file.size && existing.lastModified === e.file.lastModified) return true;
+    }
+    return false;
+  }
+
   async function pickExportPath(defaultName) {
     var name = safeFileName(defaultName, 'video.mp4');
     if (!/\.mp4$/i.test(name)) name += '.mp4';
     if (VEW.test && window.__veTest && window.__veTest.exportToMemory) { exportTarget = { display: name, handle: null }; return name; }
+    if (VEW.test && window.__veTest && window.__veTest.exportHandle) { exportTarget = { display: name, handle: window.__veTest.exportHandle }; return name; } // tests: an OPFS file handle stands in for the save picker
     if (VEW.caps.fileSystemAccess) {
       try {
         var handle = await window.showSaveFilePicker({ suggestedName: name, id: 've-export', types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }] });
@@ -312,17 +349,26 @@
     if (exportJobs.size >= 1) return { ok: false, error: { code: 'BUSY', message: 'An export is already running' } };
     var mediaMap = {};
     var files = {};
+    var used = [];
     for (var i = 0; i < r.segments.length; i++) {
       var entry = registry.get(String(r.segments[i] && r.segments[i].mediaId));
       if (!entry) return { ok: false, error: { code: 'MEDIA_MISSING', message: 'Unknown media' } };
       mediaMap[entry.id] = Object.assign({}, entry.info, { id: entry.id });
       files[entry.id] = entry.file;
+      if (used.indexOf(entry) < 0) used.push(entry);
     }
+    // an export never overwrites a source video of the project: the same file entry (when the browser handed out handles) or, as a fallback, an
+    // existing output file with the same name, size and modification time as a source
+    if (await isSourceOf(exportTarget, used)) return { ok: false, error: { code: 'OUT_IS_SOURCE', message: 'The output file is a source video of the project' } };
     var target = exportTarget;
     var jobId = 'job' + Date.now().toString(36);
     var job;
     try {
       var eng = await exportEngine();
+      // without a file handle (browsers that cannot save straight to a file) the finished video is built in memory: refuse what cannot fit
+      var plan = eng.buildPlan({ segments: r.segments, media: mediaMap, settings: r.settings || {} });
+      var estimate = ((plan.bitrate + plan.audioBitrate) / 8) * plan.totalDuration;
+      if (!target.handle && estimate > MEMORY_EXPORT_LIMIT) return { ok: false, error: { code: 'TOO_LARGE', message: 'The result (about ' + Math.round(estimate / 1048576) + ' MB) is too large to build in memory' } };
       job = eng.runExport({
         segments: r.segments, media: mediaMap, files: files, settings: r.settings || {}, outName: target.display, handle: target.handle,
         onProgress: function (p) { emit('export:progress', Object.assign({ jobId: jobId }, p)); },
@@ -490,12 +536,9 @@
     return name + (m ? ' ' + m[1].split('.')[0] : '');
   }
 
-  // The assistant arrives in a later step of the web edition; until then these answer "not available" and the UI keeps the AI button hidden.
-  function notAvailable() { return Promise.resolve({ ok: false, error: { code: 'NOT_AVAILABLE', message: 'The assistant is not available in this build.' } }); }
-
   window.addEventListener('beforeunload', function (e) {
     var S = window.VE && window.VE.state && window.VE.state.S;
-    if (S && S.dirty && S.segments.length) { e.preventDefault(); e.returnValue = ''; }
+    if ((S && S.dirty && S.segments.length) || exportJobs.size) { e.preventDefault(); e.returnValue = ''; }
   });
 
   window.api = {
@@ -526,18 +569,7 @@
     messageBox: messageBox,
     closeAck: function () { return Promise.resolve(true); },
     closeConfirmed: function () { return Promise.resolve(true); },
-    ai: {
-      status: function () { return Promise.resolve({ provider: 'builtin', credential: 'none', needs: 'install', ready: false, hasKey: false, vision: false, builtin: null }); },
-      save: notAvailable, clearKey: notAvailable, test: notAvailable, run: notAvailable, discover: notAvailable,
-      cancel: function () { return Promise.resolve(true); },
-      warm: function () { return Promise.resolve({ ok: true, started: false }); },
-    },
-    llm: {
-      status: notAvailable, install: notAvailable, remove: notAvailable, set: notAvailable,
-      cancel: function () { return Promise.resolve(true); },
-      stop: function () { return Promise.resolve({ ok: true }); },
-      pickDir: function () { return Promise.resolve({ canceled: true }); },
-    },
+    // window.api.ai and window.api.llm (the assistant) are added by js/web/ai/ai-api.js
   };
 
   // browsers without WebCodecs cannot decode or encode: say so instead of failing at the first import

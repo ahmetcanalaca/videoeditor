@@ -16,6 +16,8 @@ const QUALITY = {
   high: { bpp: 0.2, audioBitrate: 192000 },
   medium: { bpp: 0.11, audioBitrate: 160000 },
   low: { bpp: 0.06, audioBitrate: 128000 },
+  // not offered in the export dialog: the small copy of a video that the video analysis (Content Understanding) uploads (about 0.04 MB per second)
+  proxy: { bpp: 0.03, audioBitrate: 48000, minBitrate: 2.5e5 },
 };
 const MIN_BITRATE = 1.5e6;
 const MAX_BITRATE = 80e6;
@@ -65,7 +67,7 @@ export function buildPlan(input) {
     startFrame += nf;
     return item;
   });
-  const bitrate = Math.round(Math.min(MAX_BITRATE, Math.max(MIN_BITRATE, canvas.width * canvas.height * fps.value * quality.bpp)));
+  const bitrate = Math.round(Math.min(MAX_BITRATE, Math.max(quality.minBitrate || MIN_BITRATE, canvas.width * canvas.height * fps.value * quality.bpp)));
   return {
     canvas, fps, settings, items, bitrate,
     audioBitrate: quality.audioBitrate,

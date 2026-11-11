@@ -15,7 +15,9 @@ async function open(opts) {
   const o = opts || {};
   const fixDir = o.fixturesDir || path.join(os.tmpdir(), 've-web-fixtures');
   const fixtures = tools.makeFixtures(fixDir);
-  const server = await start({ root: SITE_ROOT, port: 0, base: o.base || '/', headers: o.headers, mounts: { '/__fixtures__/': fixDir } });
+  const upDir = o.uploadsDir || path.join(os.tmpdir(), 've-web-uploads');
+  fs.mkdirSync(upDir, { recursive: true });
+  const server = await start({ root: SITE_ROOT, port: 0, base: o.base || '/', headers: o.headers, mounts: { '/__fixtures__/': fixDir }, uploads: upDir });
   let app;
   try {
     app = await launch({ headless: o.headless, width: o.width, height: o.height, args: o.args });
@@ -28,6 +30,7 @@ async function open(opts) {
   app.server = server;
   app.fixtures = fixtures;
   app.fixDir = fixDir;
+  app.upDir = upDir;
   app.origin = 'http://127.0.0.1:' + server.port;
 
   // Fixture files become File objects in the page (what the file picker would hand over); `kind` is 'media' or 'project'.

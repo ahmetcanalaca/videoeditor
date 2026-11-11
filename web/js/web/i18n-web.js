@@ -17,6 +17,11 @@
     'exerr.MEMORY': 'Bellek yetersiz. Daha düşük çözünürlük veya daha az klip deneyin.',
     'exerr.BUSY': 'Zaten bir dışa aktarma çalışıyor.',
     'exerr.AUDIO': 'Bir videonun sesi çözülemedi. O klibi sessize alıp tekrar deneyin.',
+    'exerr.TOO_LARGE': 'Bu tarayıcı çıktıyı doğrudan dosyaya yazamıyor ve sonuç belleğe sığmayacak kadar büyük olurdu. Chrome veya Edge kullanın; ya da çözünürlüğü/kaliteyi düşürün veya projeyi kısaltın.',
+    'pwa.updateMsg': 'Video Editör\'ün yeni bir sürümü hazır. Şimdi yenilensin mi?',
+    'pwa.updateNow': 'Yenile',
+    'pwa.updateLater': 'Sonra',
+    'pwa.offlineReady': 'Çevrimdışı kullanıma hazır: bu sayfa internet olmadan da açılır.',
   });
   Object.assign(dict.en, {
     'empty.sub': 'MP4, MOV, MKV, WebM and more',
@@ -33,5 +38,10 @@
     'exerr.MEMORY': 'Not enough memory. Try a lower resolution or fewer clips.',
     'exerr.BUSY': 'An export is already running.',
     'exerr.AUDIO': 'The audio of a video could not be decoded. Mute that clip and try again.',
+    'exerr.TOO_LARGE': 'This browser cannot write the result straight to a file and it would be too large to build in memory. Use Chrome or Edge, lower the resolution / quality, or shorten the project.',
+    'pwa.updateMsg': 'A new version of Video Editor is ready. Reload now?',
+    'pwa.updateNow': 'Reload',
+    'pwa.updateLater': 'Later',
+    'pwa.offlineReady': 'Ready for offline use: this page also opens without an internet connection.',
   });
 })();

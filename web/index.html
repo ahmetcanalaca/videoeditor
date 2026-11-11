@@ -2,9 +2,10 @@
 <html lang="tr" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <!-- Static site: no inline script or style, no eval; models come from huggingface.co only when the user asks for them (see docs/SECURITY.md). The service worker adds the
-       same policy as a real HTTP header plus frame-ancestors, which a <meta> tag cannot express. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co https://raw.githubusercontent.com http://localhost:* http://127.0.0.1:*; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <!-- Static site: no inline script or style, no eval, and the page itself may talk to its own origin only (connect-src 'self'). Everything the assistant sends
+       (a model server on this computer, a cloud API the user chose) goes through a network worker whose policy lists exactly the addresses the user allowed (see
+       sw.js and SECURITY.md). The service worker adds the same page policy as a real HTTP header plus frame-ancestors, which a <meta> tag cannot express. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0d0f13">
   <meta name="color-scheme" content="dark light">
@@ -16,6 +17,8 @@
   <link rel="stylesheet" href="css/web.css">
   <script src="js/web/env.js"></script>
   <script src="js/web/api.js"></script>
+<script src="js/web/ai/net.js"></script>
+<script src="js/web/ai/ai-api.js"></script>
   <script src="js/boot.js"></script>
 </head>
 <body>
@@ -42,7 +45,7 @@
         </div>
         <button class="btn icon" id="btn-theme" data-i18n-title="tb.theme"><span data-icon="moon"></span></button>
         <button class="btn icon" id="btn-about" data-icon="info" data-i18n-title="tb.about"></button>
-        <button class="btn ai-toggle off" id="btn-ai" aria-pressed="false" aria-controls="ai-pane" data-state="off" data-i18n-title="ai.toggle" hidden><span data-icon="sparkles"></span><span class="ai-toggle-label">AI</span></button>
+        <button class="btn ai-toggle off" id="btn-ai" aria-pressed="false" aria-controls="ai-pane" data-state="off" data-i18n-title="ai.toggle"><span data-icon="sparkles"></span><span class="ai-toggle-label">AI</span></button>
         <button class="btn primary" id="btn-export"><span data-icon="export"></span><span data-i18n="tb.export">Dışa aktar</span></button>
       </div>
     </header>
@@ -216,6 +219,7 @@
   <script src="js/util.js"></script>
   <script src="js/i18n.js"></script>
   <script src="js/web/i18n-web.js"></script>
+<script src="js/web/ai/i18n-ai.js"></script>
   <script src="js/icons.js"></script>
   <script src="js/state.js"></script>
   <script src="js/player.js"></script>
@@ -225,6 +229,7 @@
   <script src="js/llmui.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/web/pwa.js"></script>
   <noscript>This editor needs JavaScript. / Bu düzenleyici JavaScript gerektirir.</noscript>
 </body>
 </html>

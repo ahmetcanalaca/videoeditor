@@ -423,3 +423,19 @@ input[type="password"] {
 .llm-panel input[type="number"] { width: 72px; flex: none; }
 .ai-found-list .ai-ico svg { color: var(--accent-text); }
 .ai-found-meta { color: var(--text-faint); }
+
+/* video analysis (Azure Content Understanding): settings section, scene list under the assistant's answer */
+.cu-wrap { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--bg-elev-2); }
+.cu-details { display: flex; flex-direction: column; gap: 8px; }
+.cu-grid { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: 9px 12px; }
+.cu-grid label { color: var(--text-dim); }
+.cu-details select { width: 100%; }
+.ai-analyses { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); white-space: normal; }
+.ai-analysis summary { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-dim); font-size: 11.5px; list-style: none; }
+.ai-analysis summary::-webkit-details-marker { display: none; }
+.ai-analysis summary .ai-ico svg { width: 13px; height: 13px; color: var(--accent-text); }
+.ai-scenes { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; max-height: 190px; overflow-y: auto; }
+.ai-scene { display: flex; gap: 6px; align-items: baseline; text-align: left; padding: 3px 6px; border-radius: 6px; border: 0; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 11px; line-height: 1.35; }
+.ai-scene:hover { background: var(--bg-hover); color: var(--text); }
+.ai-scene b { flex: none; color: var(--accent-text); font-variant-numeric: tabular-nums; font-weight: 600; }
+.ai-scene-more { padding: 2px 6px; font-size: 11px; color: var(--text-faint); }

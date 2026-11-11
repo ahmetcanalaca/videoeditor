@@ -842,16 +842,31 @@
     }, ['object']),
   };
 
+  // The video as READ by Azure Content Understanding (only for the Foundry provider with the video analysis switched on, see main/ai/cu-service.js).
+  const ANALYZE_TOOL = {
+    name: 'analyze_video',
+    description: 'READ what is in the video: scenes with a description of what is shown, the spoken words with times (a transcript) and the shot changes, produced by Azure Content Understanding. Use it whenever the request depends on WHAT IS SHOWN or SAID ("zoom into the dog scene", "cut the part where he says thank you", "remove the boring parts", "speed up the scenes without people"). The first time it analyses a reduced copy of the video (the user is asked before anything is uploaded) and takes seconds to minutes; later calls are instant. Call it once for the whole video, or with start/end for a part. query: a few keywords you look for (English, and the words that are spoken); scenes that contain them are marked match=true. Then edit with the start/end of those scenes (original times).',
+    parameters: obj({
+      start: { type: 'number', description: 'Only analyse from this time (seconds, original timeline). Optional.' },
+      end: { type: 'number', description: 'Only analyse until this time (seconds, original timeline). Optional.' },
+      query: { type: 'string', description: 'Keywords to look for, e.g. "dog" or "thank you" (optional). Matching scenes get match=true.' },
+    }),
+  };
+
   // The tool list for a model that can LOOK at the video: every range tool also takes found=, and find_in_video is added.
-  // Everybody else keeps TOOL_DEFS unchanged.
+  // A model that can READ an analysis of the video (Azure Content Understanding) gets analyze_video. Everybody else keeps TOOL_DEFS unchanged.
   function getToolDefs(opts) {
-    if (!(opts && opts.perception)) return TOOL_DEFS;
-    const defs = TOOL_DEFS.map((def) => (RANGE_TOOLS.has(def.name)
-      ? Object.assign({}, def, { parameters: Object.assign({}, def.parameters, { properties: Object.assign({}, def.parameters.properties, FOUND_PROPS) }) })
-      : def));
-    defs.push(FIND_TOOL);
+    const o = opts || {};
+    if (!o.perception && !o.analysis) return TOOL_DEFS;
+    const defs = o.perception
+      ? TOOL_DEFS.map((def) => (RANGE_TOOLS.has(def.name)
+        ? Object.assign({}, def, { parameters: Object.assign({}, def.parameters, { properties: Object.assign({}, def.parameters.properties, FOUND_PROPS) }) })
+        : def))
+      : TOOL_DEFS.slice();
+    if (o.perception) defs.push(FIND_TOOL);
+    if (o.analysis) defs.push(ANALYZE_TOOL);
     return defs;
   }
 
-  return { Session, TOOL_DEFS, TOOL_NAMES: Object.keys(TOOLS), getToolDefs, FIND_TOOL_NAME: FIND_TOOL.name, autoZoomFactor, parseTime, FOCUS_NAMES, EXPORT_ENUMS, MAX_PIECES };
+  return { Session, TOOL_DEFS, TOOL_NAMES: Object.keys(TOOLS), getToolDefs, FIND_TOOL_NAME: FIND_TOOL.name, ANALYZE_TOOL_NAME: ANALYZE_TOOL.name, autoZoomFactor, parseTime, FOCUS_NAMES, EXPORT_ENUMS, MAX_PIECES };
 });

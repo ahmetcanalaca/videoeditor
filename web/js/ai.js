@@ -19,10 +19,17 @@
   const MODEL_HINT = { builtin: '', openai: 'gpt-4o-mini', azure: 'my-deployment', foundry: 'my-deployment', anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-flash', local: 'qwen2.5:3b' };
   // problems the user can fix in the settings dialog (the error card then offers a shortcut)
   const FIXABLE = ['AUTH', 'FORBIDDEN', 'NO_KEY', 'NOT_CONFIGURED', 'KEY_MISMATCH', 'NOT_FOUND', 'NO_TOOLS', 'URL', 'URL_EMPTY', 'URL_INVALID', 'URL_SCHEME', 'URL_CREDENTIALS', 'URL_NOT_LOCAL',
-    'NOT_INSTALLED', 'MODEL_NOT_READY', 'HASH_MISMATCH', 'LLM_START_FAILED', 'LLM_START_TIMEOUT', 'RUNTIME_MISSING', 'WRITE_FAILED', 'ENTRA_NOT_CONFIRMED', 'ENDPOINT_NOT_CONFIRMED'];
+    'NOT_INSTALLED', 'MODEL_NOT_READY', 'HASH_MISMATCH', 'LLM_START_FAILED', 'LLM_START_TIMEOUT', 'RUNTIME_MISSING', 'WRITE_FAILED', 'ENTRA_NOT_CONFIRMED', 'ENDPOINT_NOT_CONFIRMED',
+    'CU_NO_ENDPOINT', 'CU_ORIGIN_MISMATCH', 'CU_NOT_CONFIRMED', 'CU_URL_INVALID', 'CU_URL_SCHEME', 'CU_URL_CREDENTIALS', 'CU_ANALYZER_INVALID', 'CU_NO_ANALYZER', 'CU_NO_DEFAULTS', 'CU_LOCATION'];
   const EXAMPLES = ['ai.ex1', 'ai.ex2', 'ai.ex3', 'ai.ex4', 'ai.ex5'];
   // what the assistant can do with the video's CONTENT (only with the built-in model)
   const VISION_EXAMPLES = ['ai.exv1', 'ai.exv2', 'ai.exv3'];
+  // ... and with an analysis by Azure Content Understanding (what is shown AND said)
+  const CU_EXAMPLES = ['ai.exc1', 'ai.exc2', 'ai.exc3'];
+  const CU_LOCATIONS = ['geography', 'dataZone', 'global'];
+  // what is still missing for the video analysis (status.cu.needs) and the names of the processing locations; the keys are built here, not inside t()
+  const cuNeedsText = (needs) => { const key = 'ai.cuNeeds.' + needs; return t(key); };
+  const cuLocationText = (loc) => { const key = 'aiset.cu.loc.' + loc; return t(key); };
   const MAX_MESSAGES = 80;
   const MAX_HISTORY = 24;
 
@@ -89,10 +96,10 @@
     return t('ai.err.INTERNAL');
   }
 
-  // errors the settings dialog can fix; for a local model an unreachable server is one of them (wrong port, not started)
+  // errors the settings dialog can fix; for a model on this computer (the Local AI helper or another server) an unreachable server is one of them (not started, wrong port)
   function isFixable(code) {
     const s = state.status;
-    return FIXABLE.includes(code) || ((code === 'NETWORK' || code === 'TIMEOUT') && !!s && s.provider === 'local');
+    return FIXABLE.includes(code) || ((code === 'NETWORK' || code === 'TIMEOUT') && !!s && (s.provider === 'local' || s.provider === 'builtin'));
   }
 
   /* ---------- rendering ---------- */
@@ -104,6 +111,8 @@
 
   function introNode() {
     const sees = !!(state.status && state.status.vision);
+    const cu = state.status && state.status.cu ? state.status.cu : null;
+    const reads = !!(cu && cu.ready);
     const chip = (key) => {
       const b = el('button', { class: 'ai-chip', type: 'button', text: t(key) });
       b.addEventListener('click', () => { if (r.input.disabled) return; r.input.value = t(key); autosize(); updateControls(); r.input.focus(); });
@@ -113,8 +122,16 @@
     const nodes = [el('div', { class: 'ai-intro-title', text: t('ai.intro') }), el('div', { class: 'ai-chips' }, chips)];
     if (sees) {
       nodes.push(el('div', { class: 'ai-intro-title', text: t('ai.introVision') }), el('div', { class: 'ai-chips', 'data-ai': 'vision-examples' }, VISION_EXAMPLES.map(chip)));
+    } else if (reads) {
+      nodes.push(el('div', { class: 'ai-intro-title', text: t('ai.introCu') }), el('div', { class: 'ai-chips', 'data-ai': 'cu-examples' }, CU_EXAMPLES.map(chip)));
     }
-    nodes.push(el('div', { class: 'ai-intro-note', text: t(sees ? 'ai.vision' : 'ai.noVision') }));
+    nodes.push(el('div', { class: 'ai-intro-note', text: t(sees ? 'ai.vision' : (reads ? 'ai.cuNote' : 'ai.noVision')) }));
+    // switched on but something is missing: say what, with a way to fix it
+    if (cu && cu.enabled && !cu.ready && !sees) {
+      const fix = el('button', { class: 'btn outline small', type: 'button', text: t('ai.setup.fix') });
+      fix.addEventListener('click', openSettings);
+      nodes.push(el('div', { class: 'ai-intro-note warn', 'data-ai': 'cu-notready' }, [el('span', { text: cuNeedsText(cu.needs) + ' ' }), fix]));
+    }
     if (!hasClips()) nodes.push(el('div', { class: 'ai-intro-note warn', text: t('ai.emptyHint') }));
     return el('div', { class: 'ai-intro' }, nodes);
   }
@@ -138,6 +155,21 @@
     }));
   }
 
+  // The analysis of the video by Azure Content Understanding: one block per analysis, a closed list of its scenes (a click moves the playhead there).
+  function analysisList(list) {
+    if (!list || !list.length) return null;
+    return el('div', { class: 'ai-analyses' }, list.map((a) => {
+      const head = t('ai.cu.line', { n: a.count, src: t(a.uploaded ? 'ai.cu.srcUploaded' : 'ai.cu.srcCache', { n: a.uploaded }) });
+      const rows = (a.scenes || []).map((s) => {
+        const b = el('button', { class: 'ai-scene', type: 'button', title: t('ai.cu.seek') }, [el('b', { text: fmtRange(Math.round(s.start), Math.round(s.end)) }), el('span', { text: ' ' + s.text })]);
+        b.addEventListener('click', () => VE.actions.seek(s.start));
+        return b;
+      });
+      const more = a.count > rows.length ? el('div', { class: 'ai-scene-more', text: t('ai.cu.more', { n: a.count - rows.length }) }) : null;
+      return el('details', { class: 'ai-analysis', 'data-ai': 'analysis' }, [el('summary', {}, [icon('film'), el('span', { text: head })]), el('div', { class: 'ai-scenes' }, rows.concat(more ? [more] : []))]);
+    }));
+  }
+
   function messageNode(m) {
     if (m.type === 'user') return el('div', { class: 'ai-msg user', text: m.text });
     if (m.type === 'info') return el('div', { class: 'ai-msg info', text: m.text });
@@ -155,10 +187,23 @@
     const kids = [el('div', { class: 'ai-text', text: m.text })];
     const looked = foundList(m.found);
     if (looked) kids.push(looked);
+    const read = analysisList(m.analyses);
+    if (read) kids.push(read);
     const list = actionList(m.actions);
     if (list) kids.push(list);
     if (m.meta) kids.push(el('div', { class: 'ai-meta', text: t('ai.meta', { n: m.meta.n, tokens: m.meta.tokens }) }));
     return el('div', { class: 'ai-msg ai' }, kids);
+  }
+
+  // progress of the video analysis (Azure Content Understanding): which part, what is happening
+  function analysisLabel(a) {
+    const n = a.parts || 1;
+    const i = a.index || 1;
+    if (a.phase === 'plan') return t('ai.cu.plan', { parts: a.parts, cached: a.cached });
+    if (a.phase === 'prepare') return t('ai.cu.prepare', { i, n, pct: Math.round((a.fraction || 0) * 100) });
+    if (a.phase === 'upload') return t('ai.cu.upload', { i, n, mb: fmtNum(a.megabytes || 0, 1) });
+    if (a.phase === 'wait') return t('ai.cu.wait', { i, n, s: Math.round((a.elapsedMs || 0) / 1000) });
+    return t('ai.cu.start');
   }
 
   function liveNode() {
@@ -167,7 +212,10 @@
     let label = t('ai.working');
     let ratio = null;
     if (VE.llmUI.state.loading) label = t('ai.loadingModel');
-    else if (s) {
+    else if (live.analysis) {
+      label = analysisLabel(live.analysis);
+      if (live.analysis.phase === 'prepare') ratio = live.analysis.fraction || 0;
+    } else if (s) {
       const what = searchWhat(s);
       label = t(s.phase === 'refine' ? 'ai.searchRefine' : (s.phase === 'ground' ? 'ai.searchGround' : 'ai.searching'), { what, done: s.done || 0, total: s.total || 0 });
       if (s.total > 0) ratio = Math.min(1, (s.done || 0) / s.total);
@@ -181,6 +229,8 @@
     }
     const looked = foundList(live.found);
     if (looked) kids.push(looked);
+    const read = analysisList(live.analyses);
+    if (read) kids.push(read);
     const list = actionList(live.actions);
     if (list) kids.push(list);
     return el('div', { class: 'ai-msg ai live' }, kids);
@@ -331,7 +381,7 @@
     r.input.value = '';
     autosize();
     state.running = true;
-    state.live = { actions: [], search: null, found: [] };
+    state.live = { actions: [], search: null, found: [], analysis: null, analyses: [] };
     const runId = ++state.runId;
     const base = S.segments;
     renderAll();
@@ -341,6 +391,11 @@
       else if (ev.kind === 'reset') state.live.actions = [];
       else if (ev.kind === 'search') state.live.search = ev.phase === 'done' ? null : { object: ev.object, position: ev.position, phase: ev.phase, done: ev.done, total: ev.total };
       else if (ev.kind === 'found') state.live.found.push({ id: ev.id, label: ev.label, intervals: ev.intervals, frames: ev.frames, step: ev.step, seconds: ev.seconds });
+      else if (ev.kind === 'analysis') {
+        // Azure Content Understanding: progress (plan / prepare / upload / wait), then the scenes that were read
+        if (ev.phase === 'done') { state.live.analysis = null; state.live.analyses.push({ count: ev.count, uploaded: ev.uploaded, range: ev.range, scenes: ev.scenes || [] }); } else if (ev.phase === 'failed') state.live.analysis = null;
+        else state.live.analysis = Object.assign({}, state.live.analysis || {}, { phase: ev.phase, index: ev.index, parts: ev.parts, cached: ev.cached, fraction: ev.fraction, megabytes: ev.megabytes, elapsedMs: ev.elapsedMs });
+      }
       renderLog();
     });
     // the model loading (llm:progress) and the search progress change the live card too
@@ -353,14 +408,15 @@
     }
     off();
     offLoad();
+    const analyses = state.live ? state.live.analyses : [];
     state.running = false;
     state.live = null;
-    handleResult(res, prompt, base);
+    handleResult(res, prompt, base, analyses);
     renderAll();
     if (state.open && !r.input.disabled) r.input.focus();
   }
 
-  function handleResult(res, prompt, base) {
+  function handleResult(res, prompt, base, analyses) {
     if (!res || !res.ok) {
       const error = (res && res.error) || { code: 'INTERNAL' };
       if (error.code === 'ABORTED') pushMessage({ type: 'info', text: t('ai.cancelled') });
@@ -369,7 +425,7 @@
     }
     const stale = !sameList(S.segments, base);
     if (res.changed && stale) {
-      pushMessage({ type: 'ai', text: res.message || '', actions: [], found: res.found || [], meta: null });
+      pushMessage({ type: 'ai', text: res.message || '', actions: [], found: res.found || [], analyses, meta: null });
       pushMessage({ type: 'info', text: t('ai.stale') });
       return;
     }
@@ -381,7 +437,7 @@
     const did = res.changed || res.exportChanged || (res.uiActions && res.uiActions.length);
     const text = res.message || t(did ? 'ai.applied' : 'ai.nothing');
     const tokens = res.usage ? (res.usage.input || 0) + (res.usage.output || 0) : 0;
-    pushMessage({ type: 'ai', text, actions: res.actions || [], found: res.found || [], meta: tokens ? { n: res.iterations || 1, tokens } : null });
+    pushMessage({ type: 'ai', text, actions: res.actions || [], found: res.found || [], analyses, meta: tokens ? { n: res.iterations || 1, tokens } : null });
     state.history.push({ role: 'user', content: prompt }, { role: 'assistant', content: text });
     if (state.history.length > MAX_HISTORY) state.history.splice(0, state.history.length - MAX_HISTORY);
     if (res.uiActions && res.uiActions.includes('open_export')) setTimeout(() => VE.exportUI.open(), 0);
@@ -442,14 +498,15 @@
     const entra = () => canEntra() && auth.value === 'entra';
     const builtin = () => provider.value === 'builtin';
 
+    // web edition: "entra" is an access token that is pasted like a key (there is no Azure CLI in a browser), so the key row stays
     const syncAuth = () => {
-      const noKey = builtin() || entra();
+      const noKey = builtin();
       keyRow.forEach((n) => { n.hidden = noKey; });
       keyHint.hidden = noKey || !keyHint.textContent;
-      keyLabel.textContent = t(provider.value === 'local' ? 'aiset.keyOptional' : 'aiset.key');
+      keyLabel.textContent = t(entra() ? 'aiset.token' : (provider.value === 'local' ? 'aiset.keyOptional' : 'aiset.key'));
       authHint.hidden = !entra();
-      authHint.textContent = entra() ? t(status.azCli === false ? 'aiset.entraNoCli' : 'aiset.entraHint') : '';
-      authHint.classList.toggle('warn', entra() && status.azCli === false);
+      authHint.textContent = entra() ? t('aiset.entraHint') : '';
+      authHint.classList.remove('warn');
     };
     const syncProvider = () => {
       const p = provider.value;
@@ -471,11 +528,12 @@
       note.innerHTML = t(builtin() ? 'llm.privacy' : 'aiset.privacy');
       if (!canEntra()) auth.value = 'key';
       syncAuth();
+      syncCu(state.status || status);
     };
     const syncKey = (st2) => {
-      key.placeholder = st2.hasKey ? '' : t('aiset.keyPlaceholder');
+      key.placeholder = st2.hasKey ? '' : t(entra() ? 'aiset.tokenPlaceholder' : 'aiset.keyPlaceholder');
       keyHint.textContent = st2.hasKey ? t('aiset.keySaved', { mask: st2.masked }) : '';
-      keyHint.hidden = builtin() || entra() || !st2.hasKey;
+      keyHint.hidden = builtin() || !st2.hasKey;
       if (clear) clear.hidden = builtin() || !st2.hasKey;
     };
     const say = (kind, text) => { result.hidden = !text; result.className = 'ai-result ' + kind; result.textContent = text || ''; };
@@ -506,6 +564,68 @@
     const note = el('div', { class: 'about-note' });
     note.innerHTML = t('aiset.privacy');
     const warn = el('div', { class: 'hint warn', text: t('aiset.keyWarn'), hidden: status.encryptionAvailable !== false });
+
+    // ---- video analysis with Azure Content Understanding (Foundry provider only; off until switched on, every upload is confirmed in a native dialog)
+    const cuSt = status.cu || {};
+    const cuOn = el('input', { type: 'checkbox', 'data-ai': 'cu-enable' });
+    cuOn.checked = !!cuSt.enabled;
+    const cuEndpoint = el('input', { type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'https://RESOURCE.services.ai.azure.com', 'data-ai': 'cu-endpoint' });
+    cuEndpoint.value = cuSt.endpoint || '';
+    const cuAnalyzer = el('input', { type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'prebuilt-videoSearch', 'data-ai': 'cu-analyzer' });
+    cuAnalyzer.value = cuSt.analyzer || 'prebuilt-videoSearch';
+    const cuLocation = el('select', { 'data-ai': 'cu-location' }, CU_LOCATIONS.map((l) => el('option', { value: l, text: cuLocationText(l) })));
+    cuLocation.value = CU_LOCATIONS.includes(cuSt.location) ? cuSt.location : 'geography';
+    const cuDerived = el('div', { class: 'hint' });
+    const cuCache = el('div', { class: 'hint' });
+    const cuTest = el('button', { class: 'btn outline', type: 'button', text: t('aiset.cu.test'), 'data-ai': 'cu-test' });
+    const cuClear = el('button', { class: 'btn outline danger-text', type: 'button', text: t('aiset.cu.clear'), 'data-ai': 'cu-clear' });
+    const cuNote = el('div', { class: 'about-note' });
+    cuNote.innerHTML = t('aiset.cu.privacy');
+    const cuGrid = el('div', { class: 'cu-grid' }, [...row(t('aiset.cu.endpoint'), cuEndpoint), ...row(t('aiset.cu.analyzer'), cuAnalyzer), ...row(t('aiset.cu.location'), cuLocation)]);
+    const cuDetails = el('div', { class: 'cu-details' }, [cuGrid, cuDerived, cuNote, el('div', { class: 'path-row' }, [cuTest, cuClear]), cuCache]);
+    const cuWrap = el('div', { class: 'cu-wrap', 'data-ai': 'cu-section' }, [el('div', { class: 'ai-intro-title', text: t('aiset.cu.title') }), el('label', { class: 'check' }, [cuOn, el('span', { text: t('aiset.cu.enable') })]), cuDetails]);
+    // display only (the main process derives the real address): what the Content Understanding address would be for the Foundry address typed above
+    const deriveCuAddress = (typed) => {
+      let u;
+      try { u = new URL(String(typed || '').trim()); } catch (e) { return ''; }
+      const host = u.hostname.toLowerCase();
+      if (u.protocol === 'http:' && (host === 'localhost' || host === '127.0.0.1' || host === '[::1]')) return u.origin;
+      if (u.protocol !== 'https:') return '';
+      if (/\.(?:services\.ai|cognitiveservices)\.azure\.com$/.test(host)) return u.origin;
+      const m = /^([a-z0-9-]+)\.openai\.azure\.com$/.exec(host);
+      return m ? 'https://' + m[1] + '.services.ai.azure.com' : '';
+    };
+    const syncCu = (st2) => {
+      const s2 = (st2 && st2.cu) || cuSt;
+      cuWrap.hidden = provider.value !== 'foundry';
+      cuDetails.hidden = !cuOn.checked;
+      // while the video analysis is on, the note about what is sent says so
+      if (!builtin()) note.innerHTML = t(provider.value === 'foundry' && cuOn.checked ? 'aiset.privacyCu' : 'aiset.privacy');
+      const derived = deriveCuAddress(url.value) || (url.value.trim() ? '' : (s2.effectiveEndpoint || ''));
+      cuDerived.textContent = cuEndpoint.value.trim() ? '' : t(derived ? 'aiset.cu.derived' : 'aiset.cu.derivedNone', { addr: derived });
+      cuDerived.hidden = !cuDerived.textContent;
+      const c = s2.cache || { files: 0, bytes: 0 };
+      cuCache.textContent = t('aiset.cu.cache', { files: c.files, size: VE.util.formatBytes(c.bytes) });
+      cuClear.disabled = !c.files;
+    };
+    cuOn.addEventListener('change', () => syncCu(state.status || status));
+    cuEndpoint.addEventListener('input', () => syncCu(state.status || status));
+    url.addEventListener('input', () => syncCu(state.status || status));
+    cuTest.addEventListener('click', async () => {
+      cuTest.disabled = true;
+      say('busy', t('aiset.cu.testing'));
+      let res;
+      try { res = await api.ai.cuTest(); } catch (e) { res = { ok: false, error: { code: 'INTERNAL' } }; }
+      cuTest.disabled = false;
+      if (!res.ok) { say('err', errorText(res.error) + (res.error && res.error.detail ? ' (' + res.error.detail + ')' : '')); return; }
+      if (!res.defaultsSet) { say('err', t('aiset.cu.noDefaults')); return; }
+      say('ok', t('aiset.cu.testOk', { models: Object.keys(res.defaults).join(', ') }));
+    });
+    cuClear.addEventListener('click', async () => {
+      const res = await api.ai.cuClearCache();
+      if (res && res.status) { state.status = res.status; syncCu(res.status); }
+      say('ok', t('aiset.cu.cleared', { n: res ? res.removed : 0 }));
+    });
 
     const closeBtn = el('button', { class: 'btn outline', type: 'button', text: t('aiset.close') });
     closeBtn.addEventListener('click', () => VE.modal.close());
@@ -571,7 +691,8 @@
         say('ok', t('llm.testOk', { backend: t(started.backend === 'vk' ? 'llm.backend.vkShort' : 'llm.backend.cpuShort') }));
         return;
       }
-      const saved = await api.ai.save({ provider: provider.value, baseUrl: url.value, model: model.value, apiVersion: version.value, shareNames: share.checked, auth: auth.value, apiKey: key.value });
+      const cuReq = provider.value === 'foundry' ? { enabled: cuOn.checked, endpoint: cuEndpoint.value, analyzer: cuAnalyzer.value, location: cuLocation.value } : undefined;
+      const saved = await api.ai.save({ provider: provider.value, baseUrl: url.value, model: model.value, apiVersion: version.value, shareNames: share.checked, auth: auth.value, apiKey: key.value, cu: cuReq });
       // a rejected save keeps what was typed so it can be corrected; the secret leaves the DOM as soon as the main process has it
       if (!saved.ok) { say('err', errorText(saved.error)); saveBtn.disabled = false; clear.disabled = false; return; }
       key.value = '';
@@ -580,8 +701,21 @@
       url.value = saved.status.baseUrl || '';
       model.value = saved.status.model || '';
       version.value = saved.status.apiVersion || '';
+      if (saved.status.cu && saved.status.cu.available) {
+        cuOn.checked = !!saved.status.cu.enabled;
+        cuEndpoint.value = saved.status.cu.endpoint || '';
+        cuAnalyzer.value = saved.status.cu.analyzer;
+        cuLocation.value = saved.status.cu.location;
+      }
       syncKey(saved.status);
+      syncCu(saved.status);
       renderAll();
+      // what to add to the result line about the video analysis: ready, or what is still missing
+      const cuTail = () => {
+        const c = saved.status.cu;
+        if (!c || !c.available || !c.enabled) return '';
+        return ' ' + (c.ready ? t('aiset.cu.ready') : cuNeedsText(c.needs));
+      };
       if (saved.keyCleared) { say('err', t('aiset.keyCleared')); saveBtn.disabled = false; clear.disabled = false; return; }
       if (saved.status.needs === 'key') { say('ok', t('aiset.needKey')); saveBtn.disabled = false; clear.disabled = false; return; }
       const test = await api.ai.test();
@@ -591,14 +725,14 @@
         return;
       }
       models.replaceChildren(...(test.models || []).map((m) => el('option', { value: m })));
-      if (test.modelOk) say('ok', t('aiset.okModel'));
-      else if ((test.models || []).length) say('ok', t('aiset.okModels', { n: test.models.length }));
-      else say('ok', t('aiset.okNoModel'));
+      if (test.modelOk) say('ok', t('aiset.okModel') + cuTail());
+      else if ((test.models || []).length) say('ok', t('aiset.okModels', { n: test.models.length }) + cuTail());
+      else say('ok', t('aiset.okNoModel') + cuTail());
     }
     saveBtn.addEventListener('click', saveAndTest);
     key.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveAndTest(); } });
 
-    const body = el('div', { style: { display: 'contents' } }, [providerHint, grid, found, models, keyHint, authHint, shareRow, warn, note, result]);
+    const body = el('div', { style: { display: 'contents' } }, [providerHint, grid, found, models, keyHint, authHint, shareRow, warn, cuWrap, note, result]);
     syncProvider(); // again, now that the dialog has a place to put the built-in model's panel
     VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn], onClose: () => builtinPanel.destroy() });
   }

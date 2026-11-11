@@ -1,0 +1,7 @@
+# No end-of-line conversion anywhere (the working tree is committed as it is). Vendored third-party files must stay byte-identical,
+# because scripts/vendor.js verify (run by the CI) compares their SHA-256 with web/vendor/vendor-lock.json.
+web/vendor/** -text
+*.png binary
+*.wasm binary
+*.ico binary
+*.exe binary

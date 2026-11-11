@@ -1,0 +1,15 @@
+# Paths whose change would change what users run on their computers or what the site is allowed to do. With branch protection ("Require review from Code
+# Owners") a change of these paths needs the owner's review; see SECURITY.md for the repository settings that go with it.
+# Everything has an owner (the last matching line wins): the libraries in web/vendor/ and the page's own scripts in web/js/ run in the page too, and a
+# list of "important" paths always misses one. Later, give the paths below to more people instead of the whole tree.
+* @ahmetcanalaca
+/web/vendor/ @ahmetcanalaca
+/web/js/ @ahmetcanalaca
+/web/package.json @ahmetcanalaca
+/web/local-ai/ @ahmetcanalaca
+/web/sw.js @ahmetcanalaca
+/web/scripts/ @ahmetcanalaca
+/web/js/web/ai/ @ahmetcanalaca
+/web/index.html @ahmetcanalaca
+/.github/ @ahmetcanalaca
+/SECURITY.md @ahmetcanalaca

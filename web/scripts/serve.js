@@ -6,7 +6,9 @@
 // --headers    coi: add Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy (credentialless) to try cross-origin isolation
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { pack } = require('./local-ai-pack');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -21,6 +23,7 @@ const MIME = {
   '.wasm': 'application/wasm',
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/markdown; charset=utf-8',
+  '.zip': 'application/zip',
 };
 
 function start(opts) {
@@ -35,9 +38,29 @@ function start(opts) {
   }
   // extra folders served under absolute prefixes (tests: { '/__fixtures__/': dir })
   const mounts = Object.keys(opts.mounts || {}).map((prefix) => ({ prefix, dir: path.resolve(opts.mounts[prefix]) }));
+  // from the source tree, the download of the Local AI helper (zip + info.json) is packed on the fly, as scripts/build.js does for the published site
+  let packDir = '';
+  if (opts.localAi !== false && fs.existsSync(path.join(root, 'package.json')) && fs.existsSync(path.join(root, 'local-ai', 'pins.json'))) {
+    packDir = fs.mkdtempSync(path.join(os.tmpdir(), 've-web-localai-'));
+    pack({ root, out: packDir });
+    mounts.push({ prefix: base + 'local-ai/', dir: path.join(packDir, 'local-ai') });
+  }
+  // tests only: POST /__upload__/<name> stores the body in opts.uploads (the page hands exported files to the test this way)
+  const uploads = opts.uploads ? path.resolve(opts.uploads) : '';
   const server = http.createServer((req, res) => {
     let urlPath;
     try { urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch (e) { res.writeHead(400); res.end('bad request'); return; }
+    if (uploads && req.method === 'POST' && urlPath.startsWith('/__upload__/')) {
+      const name = path.basename(urlPath.slice('/__upload__/'.length));
+      if (!name) { res.writeHead(400); res.end('bad name'); return; }
+      fs.mkdirSync(uploads, { recursive: true });
+      const target = path.join(uploads, name);
+      const out = fs.createWriteStream(target);
+      req.pipe(out);
+      out.on('finish', () => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end(target); });
+      out.on('error', () => { res.writeHead(500); res.end('write failed'); });
+      return;
+    }
     let dir = root;
     let rel;
     const mount = mounts.find((m) => urlPath.startsWith(m.prefix));
@@ -63,7 +86,12 @@ function start(opts) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(opts.port || 0, '127.0.0.1', () => {
-      resolve({ server, port: server.address().port, base, close: () => new Promise((r) => server.close(() => r())) });
+      resolve({
+        server,
+        port: server.address().port,
+        base,
+        close: () => new Promise((r) => server.close(() => { if (packDir) fs.rmSync(packDir, { recursive: true, force: true }); r(); })),
+      });
     });
   });
 }

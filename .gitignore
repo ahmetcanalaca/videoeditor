@@ -21,6 +21,10 @@ tests/out/
 tests/fixtures/
 tests/pilot/coco_vlm/
 
+# Web edition: the built site (node web/scripts/build.js) and its test output
+web/_site/
+web/tests/out/
+
 # Local/editor files
 .env
 .env.*
@@ -30,3 +34,20 @@ tests/pilot/coco_vlm/
 .idea/
 Thumbs.db
 Desktop.ini
+
+# Secrets and signing material must never be committed (the app needs none)
+.npmrc
+*.pfx
+*.p12
+*.pem
+*.key
+*.snk
+*.cer
+*.crt
+*.p8
+*.keystore
+*.jks
+*.pvk
+secrets.json
+*.secret
+*.secrets
