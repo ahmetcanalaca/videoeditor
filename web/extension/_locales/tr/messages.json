@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Video Editör – Foundry Local köprüsü",
+    "description": "Eklentinin adı (en çok 45 karakter)"
+  },
+  "extDesc": {
+    "message": "Video Editör web uygulaması, bu bilgisayardaki Foundry Local’i kullanabilir. Yalnızca 127.0.0.1 ile konuşur; veri dışarı çıkmaz.",
+    "description": "Kısa açıklama (en çok 132 karakter)"
+  }
+}

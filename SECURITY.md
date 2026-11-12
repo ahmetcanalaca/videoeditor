@@ -12,13 +12,14 @@ as possible; fixes are published together with a note in the changelog.
 
 * The **web edition** (`web/`, published with GitHub Pages): a static site, no server code, no accounts, no analytics.
 * The **desktop edition** (`src/`, the Windows installer), including how it talks to **Foundry Local**.
+* The **browser extension** that lets the web edition use Foundry Local (`web/extension/`; see "Foundry Local in the web edition" below).
 * Not in scope (report these to their vendors): Foundry Local itself, Ollama, LM Studio, the cloud providers, your browser.
 
 ### Design (what you can verify yourself)
 
 * **Your videos never leave your computer.** The web edition reads the files you pick with the browser's own file picker, edits them with
   WebCodecs inside the page and writes the result with the save picker. There is no upload endpoint. The **only** requests that can leave the
-  page belong to the optional AI assistant that you switch on yourself: to a model server on this computer (Ollama, LM Studio) or to the provider you chose and confirmed
+  page belong to the optional AI assistant that you switch on yourself: to a model server on this computer (Ollama, LM Studio; Foundry Local through the browser extension, see below) or to the provider you chose and confirmed
   (your command and a *text* summary of the timeline; with Foundry *video analysis* switched on, a small copy of the video goes to **your own**
   Azure resource, after a confirmation every time, and - when a zoom has to aim at an object - a few small pictures (at most 640 px) go to **your own**
   chat model, after a separate confirmation every time that names the number of pictures, the object and the model; this app does not keep them, the data policy of
@@ -41,11 +42,11 @@ as possible; fixes are published together with a note in the changelog.
   (see "Hosting" below for why).
 * **A model server on this computer (web edition) is reachable only if it lets the page in.** Ollama (`OLLAMA_ORIGINS`) can allow just this site. LM Studio's "Enable CORS" switch allows
   every website while it is on: other sites you visit could then also send requests to that server, so switch it on only when you need it. Chrome / Edge ask once before a page on the internet may talk to
-  a program on this computer ("local network access").
+  a program on this computer ("local network access"). Foundry Local lets no page in at all; the web edition reaches it only through the browser extension (below).
 * **Honest limits:** "no known vulnerabilities" is not "no vulnerabilities". Browsers and their codecs (which decode your video) are
   large programs; keep your browser up to date and only open videos from sources you trust. A cloud provider you choose sees what you send to it.
 
-### Foundry Local (desktop app only)
+### Foundry Local (desktop app)
 
 Foundry Local is Microsoft's free program that runs AI models on your computer. It is **not part of this project**: you install it yourself (`winget install Microsoft.FoundryLocal`
 or <https://aka.ms/foundry-local-installer>), and the desktop app only uses an installation that is already there. What the app does with it, and what it does not:
@@ -62,7 +63,32 @@ or <https://aka.ms/foundry-local-installer>), and the desktop app only uses an i
 * **Honest limits:** Foundry Local's server has **no key**: other programs on the computer - and other users of a shared Windows (Remote Desktop, multi-session) - can send requests to it and read the answers.
   On such a computer use the built-in model, which listens only for a random key made at every start. What the model sends back is untrusted text: the assistant can only edit the timeline (one `Ctrl+Z` undoes it all);
   it has no access to files, the network or a shell, and the tool calls it writes are parsed with strict limits (size, number of calls). Text inside video pictures can steer the model, but not more than that.
-* **In the browser:** a web page cannot reach Foundry Local at all (its server sends none of the CORS headers browsers require). The web edition only shows an explanation with the official links.
+* **In the browser:** a web page cannot reach Foundry Local by itself (its server sends none of the CORS headers browsers require). The web edition uses the optional browser extension described next.
+
+### Foundry Local in the web edition: the browser extension
+
+Because a page cannot read Foundry Local's answers, the web edition offers a small **browser extension** for Edge / Chrome (Manifest V3, `web/extension/`: plain JavaScript and HTML, no build step, no dependency). It is optional, not part of
+the page, and installed by you (developer mode, *Load unpacked*, from the zip that the site offers; the release `foundry-bridge-v1.0.0` carries the same zip with its SHA-256). What it does, and what it does not:
+
+* **Where it can go:** only `http://127.0.0.1:<port>`. Its manifest asks for two host patterns - `http://127.0.0.1/*` and this site (`https://ahmetcanalaca.github.io/videoeditor/*`, top frame only, where its one content script runs) - and two permissions: `storage` (the approval, the last port, the language)
+  and `scripting` (to attach to a tab of this site that was already open when the extension was installed). No `tabs`, `webRequest`, `cookies`, `<all_urls>`, no remote host, no `localhost`, no native messaging.
+* **What a page may ask for:** four routes of Foundry Local and nothing else - `/v1/models`, `/models/loaded`, `/models/load/{id}`, `/v1/chat/completions`. Not `/status` (the extension reads it itself; it names the Windows user in the model cache path), no unloading, no `/shutdown`, no streaming; a model id has to match a strict pattern;
+  pictures only as JPEG data, never as an address (`file:`, `http:`) that the model server could fetch; a request is at most 24 M characters, an answer at most 8 MB, two requests run at a time with a short queue behind them (the surplus gets *busy*), the time limit is 1 s to 10 min. What is sent on is the object that was checked, written again (a body that names a key twice is read differently by different parsers).
+  The page names neither an address nor a port: the extension decides where a request goes. The rules are pure functions in `web/extension/policy.js`, covered by `web/tests/ext-policy.test.js`.
+* **Who may use it:** only this site, and only after **you** approved it in a window that the extension opens itself and that names the site (a page cannot click in it; "Allow" becomes active a second and a half after the window opens, so a click that was meant for the page cannot approve). Approving and the port search need a click on the page, an automatic call is refused.
+  The approval is kept per site, can be removed in the extension's pop-up and is readable only by the extension's own pages and worker. A window that another page opened (`window.open`) is not served at all: its opener could reach into it, as every page of the same origin can.
+* **How Foundry Local is recognised:** an address is used only when `GET /status` answers like Foundry Local *and names that very address*. Looking for the port (the stored one, `5272`, then `49152–65535` on `127.0.0.1`: one small `GET /status` per port, 3-11 s) happens only when you press *Find automatically*;
+  another port is typed into the extension's own window - the page cannot choose a port, so it cannot use the extension to probe the ports of this computer.
+  After 30 seconds without a request the address is looked at again before anything else is sent: a program that took the port of a server that was stopped meanwhile and answers differently - or says nothing (it is given a second, longer chance first) - gets only a `GET /status` and none of your prompts (tested).
+  A program that copies Foundry Local's whole `/status` answer is not recognised as different (see the limits).
+* **What it keeps:** the approved site, the last port and the language, in the extension's own storage. No log, no prompts, no pictures, no telemetry; nothing leaves `127.0.0.1`.
+* **What is sent through it:** the same as in the desktop app - your command, the text summary of the timeline and, only if the model can look at pictures and you ask for something that needs it, small pictures (at most 640 px) of the video - and only to Foundry Local on this computer, so there is nothing to confirm, as in the desktop app.
+* **Honest limits:**
+  Foundry Local's server has **no key**: any program on the computer, and the approved site, can use the model that is loaded. The extension cannot see **which program** owns a port (the desktop app can: it compares the process id that `/status` returns with the owner of the port); a program that copies the whole answer of `/status` (it is public, easy to copy) on a free port could therefore receive the requests.
+  On a shared computer (Remote Desktop, multi-session) do not use it, use the desktop app's built-in model.
+  The approval belongs to the site's **origin**, which `*.github.io` shares with the account's other Pages sites (see "Hosting"): the extension refuses a window that another page opened (the usual way into a window of the same origin), but the shared origin stays a weakness of this kind of hosting - the reason not to host untrusted pages there.
+  The extension is unsigned and loaded from a folder; on a company computer, policy may forbid developer-mode extensions (ask IT to approve it, or use the desktop app). What the model sends back is untrusted text: the assistant can only edit the timeline (one `Ctrl+Z` undoes it all).
+  A scan of local ports can look unusual to endpoint-security software; fixing Foundry Local's port once (`foundry config set port 5272`) avoids it. A copy of the site that is published under another address does **not** get the feature (the manifest names this site only).
 
 ### Hosting: the origin is shared
 
@@ -78,6 +104,8 @@ own, the editor asks again, even if the address is already on the list, and show
   The installer needs no administrator rights and writes only to your user profile (per-user install).
 * **The web edition** is built by the workflow `.github/workflows/pages.yml` from this repository (every action pinned to a commit) and published by GitHub Pages; you trust this repository and GitHub.
 * **Foundry Local** is Microsoft's program, installed by you from Microsoft's own addresses; this repository neither ships nor downloads it.
+* **The browser extension** is built from `web/extension/` by `web/scripts/pack-extension.js` into a reproducible zip (the same bytes on every build). Its SHA-256 is written in the release notes of `foundry-bridge-v1.0.0` on GitHub - a place other than the site that serves the zip - and the dialog shows the `Get-FileHash` command to compare it.
+  It is **not signed or published in a store**, and runs with the rights described above: you can read all of it (about 700 lines of JavaScript) before you load it.
 
 ### Repository settings that belong to this (for the maintainer)
 
@@ -97,13 +125,14 @@ Lütfen güvenlik sorunlarını herkese açık issue yerine, GitHub'ın **Report
 
 * **Web sürümü** (`web/`, GitHub Pages ile yayınlanır): statik site; sunucu kodu, hesap ve analiz yoktur.
 * **Masaüstü sürümü** (`src/`, Windows kurulum dosyası) ve **Foundry Local** ile konuşma biçimi.
+* Web sürümünün Foundry Local'i kullanmasını sağlayan **tarayıcı uzantısı** (`web/extension/`; aşağıda "Web sürümünde Foundry Local").
 * Kapsam dışı (ilgili üreticiye bildirin): Foundry Local'in kendisi, Ollama, LM Studio, bulut sağlayıcıları, tarayıcınız.
 
 ### Tasarım (kendiniz doğrulayabilirsiniz)
 
 * **Videolarınız bilgisayarınızdan çıkmaz.** Web sürümü, tarayıcının kendi dosya seçicisiyle seçtiğiniz dosyaları okur, sayfa içinde
   WebCodecs ile düzenler ve sonucu kaydetme penceresiyle yazar. Yükleme noktası yoktur. Sayfadan çıkabilecek **tek** istekler, sizin açtığınız
-  isteğe bağlı AI asistanına aittir: bu bilgisayardaki bir model sunucusuna (Ollama, LM Studio) ya da seçip onayladığınız sağlayıcıya (komutunuz ve zaman çizelgesinin
+  isteğe bağlı AI asistanına aittir: bu bilgisayardaki bir model sunucusuna (Ollama, LM Studio; Foundry Local tarayıcı uzantısı üzerinden, aşağıya bakın) ya da seçip onayladığınız sağlayıcıya (komutunuz ve zaman çizelgesinin
   *metin* özeti; Foundry *video analizi* açıksa, her seferinde onayınızla videonun küçük bir kopyası **kendi** Azure kaynağınıza gider ve - bir zoom'un
   bir nesneye kilitlenmesi gerekiyorsa - her seferinde ayrı bir onayla (resim sayısı, nesne ve model yazılır) birkaç küçük resim (en fazla 640 piksel) **kendi**
   sohbet modelinize gider; bu uygulama onları saklamaz, modelin hizmetinde o hizmetin veri politikası geçerlidir; her resim en fazla 640 piksel ve 120 KB'tır, çağrı başına en fazla 64 istek yapılır ve sağlayıcı bağdaştırıcısının hız sınırı/ağ hatası sonrası yinelediği bir istek aynı resmi aynı adrese taşır).
@@ -122,11 +151,11 @@ Lütfen güvenlik sorunlarını herkese açık issue yerine, GitHub'ın **Report
 * **Service worker sunduğunu denetler.** Önbellekte tuttuğu her şey derleme manifestinin SHA-256 değeriyle karşılaştırılır; manifest de, hash'i derleme sırasında worker
   betiğinin kendisine yazılmış olan manifest olmak zorundadır. Değişmiş veya sahte bir önbellek kaydı atılır, dosya ağdan gelir (nedeni için aşağıdaki "Barındırma" bölümüne bakın).
 * **Bu bilgisayardaki bir model sunucusuna (web sürümü) yalnızca sunucu sayfayı içeri alırsa ulaşılır.** Ollama (`OLLAMA_ORIGINS`) yalnızca bu siteye izin verebilir. LM Studio'nun "Enable CORS" anahtarı açıkken **her** web sitesine izin verir:
-  gezdiğiniz başka siteler de o sunucuya istek gönderebilir; bu yüzden yalnızca gerektiğinde açın. Chrome / Edge, internetteki bir sayfa bu bilgisayardaki bir programla konuşmadan önce bir kez sorar ("yerel ağ erişimi").
+  gezdiğiniz başka siteler de o sunucuya istek gönderebilir; bu yüzden yalnızca gerektiğinde açın. Chrome / Edge, internetteki bir sayfa bu bilgisayardaki bir programla konuşmadan önce bir kez sorar ("yerel ağ erişimi"). Foundry Local hiçbir sayfayı içeri almaz; web sürümü ona yalnızca tarayıcı uzantısı üzerinden ulaşır (aşağıda).
 * **Dürüst sınırlar:** "bilinen açık yok", "açık yok" demek değildir. Tarayıcılar ve kodekleri (videonuzu çözen kısım) büyük programlardır;
   tarayıcınızı güncel tutun ve yalnızca güvendiğiniz kaynaklardan video açın. Seçtiğiniz bulut sağlayıcısı kendisine gönderdiklerinizi görür.
 
-### Foundry Local (yalnızca masaüstü uygulaması)
+### Foundry Local (masaüstü uygulaması)
 
 Foundry Local, Microsoft'un yapay zekâ modellerini bilgisayarınızda çalıştıran ücretsiz programıdır. **Bu projenin parçası değildir**: siz kurarsınız (`winget install Microsoft.FoundryLocal`
 ya da <https://aka.ms/foundry-local-installer>); masaüstü uygulaması yalnızca kurulu olanı kullanır. Uygulamanın onunla yaptıkları ve yapmadıkları:
@@ -143,7 +172,32 @@ ya da <https://aka.ms/foundry-local-installer>); masaüstü uygulaması yalnızc
 * **Dürüst sınırlar:** Foundry Local'in sunucusu **anahtar istemez**: bilgisayardaki başka programlar - ve paylaşılan bir Windows'ta (Uzak Masaüstü, çok oturum) başka kullanıcılar - ona istek gönderip yanıtları okuyabilir.
   Böyle bir bilgisayarda, her başlatmada üretilen rastgele bir anahtarla korunan yerleşik modeli kullanın. Modelin geri gönderdiği metin güvenilmezdir: asistan yalnızca zaman çizelgesini düzenleyebilir (`Ctrl+Z` hepsini geri alır);
   dosyalara, ağa veya kabuğa erişimi yoktur; yazdığı araç çağrıları sıkı sınırlarla ayrıştırılır (boyut, çağrı sayısı). Video karelerindeki yazılar modeli yönlendirebilir, ama bundan fazlasını yapamaz.
-* **Tarayıcıda:** bir web sayfası Foundry Local'e hiç ulaşamaz (sunucusu tarayıcıların istediği CORS başlıklarının hiçbirini göndermiyor). Web sürümü yalnızca resmî bağlantılarla bir açıklama gösterir.
+* **Tarayıcıda:** bir web sayfası Foundry Local'e kendi başına ulaşamaz (sunucusu tarayıcıların istediği CORS başlıklarının hiçbirini göndermiyor). Web sürümü bunun için aşağıda anlatılan isteğe bağlı tarayıcı uzantısını kullanır.
+
+### Web sürümünde Foundry Local: tarayıcı uzantısı
+
+Bir sayfa Foundry Local'in yanıtlarını okuyamadığı için web sürümü, Edge / Chrome için küçük bir **tarayıcı uzantısı** sunar (Manifest V3, `web/extension/`: düz JavaScript ve HTML, derleme adımı yok, bağımlılık yok). İsteğe bağlıdır, sayfanın parçası değildir ve sizin tarafınızdan kurulur
+(geliştirici modu, *Paketlenmemiş öğe yükle*; sitenin sunduğu zip'ten; `foundry-bridge-v1.0.0` sürümü aynı zip'i SHA-256 değeriyle taşır). Ne yapar, ne yapmaz:
+
+* **Nereye gidebilir:** yalnızca `http://127.0.0.1:<port>`. Manifesti iki ana makine kalıbı ister - `http://127.0.0.1/*` ve bu site (`https://ahmetcanalaca.github.io/videoeditor/*`, yalnızca üst çerçeve; tek içerik betiği burada çalışır) - ve iki izin: `storage` (onay, son port, dil)
+  ve `scripting` (uzantı kurulduğunda zaten açık olan bu sitenin sekmesine bağlanmak için). `tabs`, `webRequest`, `cookies`, `<all_urls>`, uzak sunucu, `localhost`, native messaging yoktur.
+* **Bir sayfa ne isteyebilir:** Foundry Local'in dört yolu ve başka hiçbir şey - `/v1/models`, `/models/loaded`, `/models/load/{id}`, `/v1/chat/completions`. `/status` yok (uzantı onu kendisi okur; model önbellek yolunda Windows kullanıcı adı geçer), model boşaltma yok, `/shutdown` yok, akış (stream) yok; model adı sıkı bir kalıba uymalı;
+  resimler yalnızca JPEG verisi olabilir, model sunucusunun kendisi getirebileceği bir adres (`file:`, `http:`) olamaz; bir istek en fazla 24 M karakter, bir yanıt en fazla 8 MB, aynı anda iki istek ve arkasında kısa bir kuyruk (fazlası *meşgul* yanıtı alır), zaman sınırı 1 sn - 10 dk. İleriye giden, denetlenen nesnenin yeniden yazılmış hâlidir (bir anahtarı iki kez yazan gövdeyi farklı ayrıştırıcılar farklı okur).
+  Sayfa ne adres ne port söyler: isteğin nereye gideceğine uzantı karar verir. Kurallar `web/extension/policy.js` içinde saf fonksiyonlardır ve `web/tests/ext-policy.test.js` ile sınanır.
+* **Kim kullanabilir:** yalnızca bu site ve yalnızca **siz** uzantının kendi açtığı, siteyi adıyla gösteren bir pencerede onayladıktan sonra (o pencerede bir sayfa tıklayamaz; **İzin ver** düğmesi pencere açıldıktan bir buçuk saniye sonra etkinleşir, böylece sayfaya yönelik bir tıklama onay vermez). Onay vermek ve port aramak sayfada bir tıklama ister; kendiliğinden yapılan çağrı reddedilir.
+  Onay site başına tutulur, uzantının açılır penceresinden kaldırılabilir ve yalnızca uzantının kendi sayfaları ile işçisi tarafından okunabilir. Başka bir sayfanın açtığı pencere (`window.open`) hiç hizmet almaz: açan sayfa, aynı kökendeki her sayfa gibi, onun içine uzanabilir.
+* **Foundry Local nasıl tanınır:** bir adres yalnızca `GET /status` Foundry Local gibi *ve sorulan adresin kendisini adlandırarak* yanıt verirse kullanılır. Portun aranması (kayıtlı port, `5272`, sonra `127.0.0.1` üzerinde `49152–65535`: port başına küçük bir `GET /status`, 3-11 sn) yalnızca *Otomatik bul*'a basınca yapılır;
+  başka bir port uzantının kendi penceresine yazılır - sayfa port seçemez, dolayısıyla uzantıyı bu bilgisayarın portlarını yoklamak için kullanamaz.
+  30 saniye istek gelmezse, başka bir şey gönderilmeden önce adrese yeniden bakılır: bu arada durdurulmuş bir sunucunun portunu alıp farklı yanıt veren - ya da hiç yanıt vermeyen (ona önce ikinci, daha uzun bir şans verilir) - bir program yalnızca bir `GET /status` görür, komutlarınızı görmez (sınandı).
+  `/status` yanıtının tamamını kopyalayan bir program farklı olarak tanınmaz (sınırlara bakın).
+* **Ne saklar:** onaylanan site, son port ve dil; uzantının kendi depolama alanında. Günlük, komut, resim, telemetri yoktur; `127.0.0.1` dışına hiçbir şey çıkmaz.
+* **Ondan ne geçer:** masaüstü uygulamasındakiyle aynısı - komutunuz, zaman çizelgesinin metin özeti ve, yalnızca model resme bakabiliyorsa ve buna ihtiyaç duyan bir şey isterseniz, videodan küçük resimler (en fazla 640 piksel) - ve yalnızca bu bilgisayardaki Foundry Local'e; bu yüzden masaüstü uygulamasında olduğu gibi onaylanacak bir şey yoktur.
+* **Dürüst sınırlar:**
+  Foundry Local'in sunucusu **anahtar istemez**: bilgisayardaki her program ve onaylanan site, yüklü modeli kullanabilir. Uzantı bir portun **hangi programa** ait olduğunu göremez (masaüstü uygulaması görür: `/status`'un döndürdüğü süreç numarasını portun sahibiyle karşılaştırır);
+  boş bir portta `/status` yanıtının tamamını kopyalayan bir program (yanıt herkese açıktır, kopyalamak kolaydır) bu yüzden istekleri alabilir. Paylaşılan bir bilgisayarda (Uzak Masaüstü, çok oturum) kullanmayın; masaüstü uygulamasının yerleşik modelini kullanın.
+  Onay sitenin **köken**ine bağlıdır; `*.github.io` bu kökeni hesabın diğer Pages siteleriyle paylaşır ("Barındırma" bölümüne bakın): uzantı başka bir sayfanın açtığı pencereyi (aynı kökendeki bir pencereye uzanmanın olağan yolu) reddeder, ama ortak köken bu tür barındırmanın zayıflığı olarak kalır - orada güvenilmeyen sayfa barındırmamanın nedeni budur.
+  Uzantı imzasızdır ve bir klasörden yüklenir; şirket bilgisayarında politika geliştirici modu uzantılarını yasaklayabilir (BT'den onay isteyin ya da masaüstü uygulamasını kullanın). Modelin geri gönderdiği metin güvenilmezdir: asistan yalnızca zaman çizelgesini düzenleyebilir (`Ctrl+Z` hepsini geri alır).
+  Yerel portların taranması güvenlik yazılımlarına alışılmadık görünebilir; Foundry Local'in portunu bir kez sabitlemek (`foundry config set port 5272`) bunu önler. Sitenin başka bir adreste yayınlanan bir kopyası bu özelliği **almaz** (manifest yalnızca bu siteyi adlandırır).
 
 ### Barındırma: köken (origin) ortaktır
 
@@ -159,6 +213,8 @@ veya bu siteye kendi kökenini verin (özel alan adı ya da ayrı bir GitHub kul
   ikisi de derleme için indirilirken SHA-256 ile sabitlenmiştir. Kurulum yönetici yetkisi gerektirmez ve yalnızca kullanıcı profilinize yazar (kullanıcı başına kurulum).
 * **Web sürümü**, bu depodan `.github/workflows/pages.yml` iş akışıyla (her eylem bir commit'e sabitlenmiş) derlenir ve GitHub Pages ile yayınlanır; bu depoya ve GitHub'a güvenirsiniz.
 * **Foundry Local** Microsoft'un programıdır ve Microsoft'un kendi adreslerinden siz kurarsınız; bu depo onu ne dağıtır ne indirir.
+* **Tarayıcı uzantısı** `web/extension/` klasöründen `web/scripts/pack-extension.js` ile yeniden üretilebilir bir zip'e derlenir (her derlemede aynı baytlar). SHA-256 değeri GitHub'daki `foundry-bridge-v1.0.0` sürüm notunda yazar - zip'i sunan siteden başka bir yerde - ve pencere karşılaştırmak için `Get-FileHash` komutunu gösterir.
+  **İmzalı değildir ve mağazada yayınlanmamıştır**, yukarıda anlatılan haklarla çalışır: yüklemeden önce hepsini okuyabilirsiniz (yaklaşık 700 satır JavaScript).
 
 ### Bununla ilgili depo ayarları (bakımcı için)
 

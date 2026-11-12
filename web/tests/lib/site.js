@@ -4,13 +4,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { start } = require('../../scripts/serve');
-const { launch } = require('./browser');
+const { launch, sleep, waitUntil } = require('./browser');
+const { checker } = require('./check');
 const tools = require('./media-tools');
 
 const SITE_ROOT = path.join(__dirname, '..', '..');
 const READY = "typeof VE !== 'undefined' && !!VE.actions && !!VE.exportUI";
 
-// opts: { base?, headers?, query?, headless?, width?, height?, fixturesDir?, args? }
+// opts: { base?, headers?, query?, headless?, width?, height?, fixturesDir?, args?, extensions? (folders of unpacked browser extensions to load; the page is opened once the first one is running) }
 async function open(opts) {
   const o = opts || {};
   const fixDir = o.fixturesDir || path.join(os.tmpdir(), 've-web-fixtures');
@@ -20,7 +21,12 @@ async function open(opts) {
   const server = await start({ root: SITE_ROOT, port: 0, base: o.base || '/', headers: o.headers, mounts: { '/__fixtures__/': fixDir }, uploads: upDir });
   let app;
   try {
-    app = await launch({ headless: o.headless, width: o.width, height: o.height, args: o.args });
+    app = await launch({ headless: o.headless, width: o.width, height: o.height, args: o.args, extensions: o.extensions, userData: o.userData });
+    if (o.extensions && o.extensions.length) {
+      // a page that is opened before the browser has started the extension would not get its content script
+      await waitUntil(async () => (await app.targets()).some((t) => t.type === 'service_worker' && /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url)), 30000, 'the extension\'s service worker');
+      await sleep(600);
+    }
     await app.navigate('http://127.0.0.1:' + server.port + server.base + 'index.html?vetest' + (o.query || ''), READY);
   } catch (e) {
     if (app) await app.close();
@@ -58,20 +64,5 @@ async function open(opts) {
   return app;
 }
 
-// A tiny assertion collector: prints PASS/FAIL lines and sets a failing exit code.
-function checker(title) {
-  const results = [];
-  const fn = function (name, ok, detail) {
-    results.push({ name, ok: !!ok });
-    console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail !== undefined && (!ok || process.env.VE_VERBOSE) ? '  -> ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''));
-    if (!ok) process.exitCode = 1;
-  };
-  fn.summary = function () {
-    const bad = results.filter((r) => !r.ok).length;
-    console.log('\n' + title + ': ' + (results.length - bad) + '/' + results.length + ' passed' + (bad ? ' - ' + bad + ' FAILED' : ''));
-    return bad === 0;
-  };
-  return fn;
-}
-
+// (the assertion collector is in check.js, which needs no browser; it is re-exported here for the browser tests)
 module.exports = { open, checker, SITE_ROOT };

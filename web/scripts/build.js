@@ -102,8 +102,14 @@ function build(opts) {
     '',
   ].join('\n'));
 
+  // 6. the browser extension for Foundry Local (extension/): the zip that the settings dialog offers, under a fixed name, with its SHA-256 next to it. It is only
+  //    downloaded, never used by the page itself, so it is not part of the precache.
+  const packExtension = require('./pack-extension');
+  const zip = packExtension.buildZip({ root: ROOT, zip: path.join(OUT, 'extension', packExtension.ZIP_NAME) });
+  const extension = { version: zip.version, sha256: zip.sha256, bytes: zip.bytes, files: zip.files.length };
+
   const bytes = copied.reduce((s, f) => s + fs.statSync(path.join(OUT, f)).size, 0);
-  return { out: OUT, files: copied.length, precached: files.length, build: buildId, version: pkg.version, bytes };
+  return { out: OUT, files: copied.length, precached: files.length, build: buildId, version: pkg.version, bytes, extension };
 }
 
 module.exports = { build };
@@ -114,4 +120,5 @@ if (require.main === module) {
   const root = path.resolve(__dirname, '..');
   const r = build({ root, out: outArg || path.join(root, '_site') });
   console.log('built ' + path.relative(process.cwd(), r.out) + ': ' + r.files + ' files (' + r.precached + ' precached), ' + (r.bytes / 1048576).toFixed(1) + ' MB, build ' + r.build + ', version ' + r.version);
+  console.log('extension zip: version ' + r.extension.version + ', ' + r.extension.files + ' files, ' + r.extension.bytes + ' bytes, sha256 ' + r.extension.sha256);
 }

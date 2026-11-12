@@ -42,6 +42,14 @@ const BASE = '/videoeditor/';
     const missing = manifest.files.filter((f) => !cached.includes(BASE + f.url));
     check('04 every file of the precache list is cached', missing.length === 0 && manifest.files.length > 30, { files: manifest.files.length, missing: missing.slice(0, 5).map((f) => f.url) });
     check('05 the AI libraries (optional, large) are NOT part of the precache', !manifest.files.some((f) => /^vendor\/(webllm|transformers|models)\//.test(f.url)));
+    // the browser extension for Foundry Local is published next to the app (the settings dialog offers it): a zip with a .sha256 file that names it; it is only downloaded,
+    // so it is not precached - but the worker must let the download through
+    const zipFile = path.join(site, 'extension', 'video-editor-foundry-bridge.zip');
+    const zipBytes = fs.readFileSync(zipFile);
+    const zipSha = require('crypto').createHash('sha256').update(zipBytes).digest('hex');
+    check('05b the extension zip is published under a fixed name with its SHA-256 next to it (the hash of the build report and of the file agree), and it is not in the precache list', zipSha === v1.extension.sha256 && fs.readFileSync(zipFile + '.sha256', 'utf8').trim() === v1.extension.sha256 + '  video-editor-foundry-bridge.zip' && !manifest.files.some((f) => /^extension\//.test(f.url)), { build: v1.extension, onDisk: zipSha });
+    const viaWorker = await ev("fetch('extension/video-editor-foundry-bridge.zip').then(async (r) => { const b = new Uint8Array(await r.arrayBuffer()); const h = await crypto.subtle.digest('SHA-256', b); return { ok: r.ok, size: b.length, sha: Array.from(new Uint8Array(h)).map((x) => x.toString(16).padStart(2, '0')).join(''), pk: b[0] === 0x50 && b[1] === 0x4b }; })");
+    check('05c the page can download it through the service worker, byte for byte', viaWorker.ok && viaWorker.pk && viaWorker.size === zipBytes.length && viaWorker.sha === zipSha, viaWorker);
 
     // a reload is controlled by the worker and gets the real headers
     docHeaders.length = 0;

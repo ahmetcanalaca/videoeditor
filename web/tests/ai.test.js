@@ -2,7 +2,8 @@
 // The assistant of the web edition in a real browser, against stand-ins for the servers: a model server on this computer (with a key, and CORS because the page
 // is another origin), a request that edits the timeline (one undo step), cancelling, a wrong key / nobody there, a model that cannot call tools (the tools go
 // into the prompt), cloud providers (OpenAI, Azure with the confirmation of an unknown address, Anthropic's browser header, the key kept for the tab only)
-// and the settings dialog (Foundry Local is an explanation with the official links: a web page cannot reach it).
+// and the settings dialog (Foundry Local is a panel with four steps; this browser has no extension, so only the first is open - the extension itself is tested in
+// fl-bridge.test.js, the whole path with the assistant in fl-web.test.js).
 //   node tests/ai.test.js        (VE_BROWSER=<chrome|edge exe>; needs ffmpeg for the test videos: see tests/lib/media-tools.js)
 const os = require('os');
 const path = require('path');
@@ -11,8 +12,6 @@ const mock = require('./lib/mock-llm');
 
 const SHOTS = process.env.VE_SHOTS || path.join(os.tmpdir(), 've-web-shots');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-const FL_LINKS = ['https://aka.ms/foundry-local-installer', 'https://learn.microsoft.com/azure/foundry-local/get-started', 'https://github.com/ahmetcanalaca/videoeditor/releases/latest'];
 
 (async () => {
   const check = checker('web ai');
@@ -186,8 +185,22 @@ const FL_LINKS = ['https://aka.ms/foundry-local-installer', 'https://learn.micro
     check('34 a "local" model must be on this computer (127.0.0.1 / localhost); LAN addresses and IPv6 literals are refused', !sV6.ok && sV6.error.code === 'URL_NOT_LOCAL' && !sLan.ok && sLan.error.code === 'URL_NOT_LOCAL', [sV6.error, sLan.error]);
     const sHttp = await ev(`window.api.ai.save({ provider: 'openai', baseUrl: 'http://example.com/v1', model: 'm', apiKey: 'abc' })`);
     check('35 plain http to a remote address is refused', !sHttp.ok && sHttp.error.code === 'URL_SCHEME', sHttp.error);
-    const sFl = await ev(`window.api.ai.save({ provider: 'foundrylocal', baseUrl: '', model: 'qwen3.5-4b' })`);
-    check('36 "foundrylocal" is not a provider of the web edition (it is only an explanation in the dialog): saving it is refused', !sFl.ok && sFl.error.code === 'BAD_PROVIDER', sFl);
+    const sFl = await ev(`window.api.ai.save({ provider: 'foundrylocal', baseUrl: 'http://evil.example', model: 'qwen3.5-4b', apiKey: 'sk-not-used' })`);
+    check('36 "foundrylocal" is a provider of the web edition: it saves a model name only - no address, no key, no confirmation (the browser extension finds the server) - and it is not "ready to see pictures" until the model was asked', sFl.ok && sFl.status.provider === 'foundrylocal' && sFl.status.model === 'qwen3.5-4b' && sFl.status.ready && sFl.status.credential === 'none' && sFl.status.effectiveBaseUrl === '' && sFl.status.vision === false && sFl.status.cu.available === false && !sFl.status.urlError, sFl);
+    const sFlBad = await ev(`window.api.ai.save({ provider: 'foundrylocal', model: '../shutdown' })`);
+    const stAfter = await status();
+    check('36b a model name that could change a request path is refused, and what was saved stays', !sFlBad.ok && sFlBad.error.code === 'FL_BAD_MODEL' && stAfter.model === 'qwen3.5-4b', { sFlBad, model: stAfter.model });
+    await ev('VE.ai.refresh()');
+    const seenByLlm = llm.log.length;
+    await ev("VE.ai.send('Cut the first 3 seconds')");
+    await waitIdle();
+    const msgsNoExt = (await aiState()).messages;
+    const lastNoExt = msgsNoExt[msgsNoExt.length - 1];
+    check('36c without the extension a request says so at once (FL_NO_BRIDGE, with the shortcut to the settings) instead of waiting for an answer that never comes, and nothing was sent anywhere', !!lastNoExt && lastNoExt.type === 'error' && lastNoExt.code === 'FL_NO_BRIDGE' && lastNoExt.fix === true && /eklenti/i.test(lastNoExt.text) && llm.log.length === seenByLlm, lastNoExt);
+    const useNoExt = await ev(`window.api.fl.use({ model: 'qwen3.5-4b' })`);
+    check('36d "use this model" without the extension: FL_NO_BRIDGE', !useNoExt.ok && useNoExt.error.code === 'FL_NO_BRIDGE', useNoExt);
+    const flState = await ev('window.api.fl.state()');
+    check('36e the state says the extension is not there (and asks nothing else)', flState.ok && flState.bridge.present === false && flState.found === false && flState.ids.length === 0, flState);
     await ev('delete window.__veTest.netFetch');
 
     /* ---------------- local servers ---------------- */
@@ -197,7 +210,7 @@ const FL_LINKS = ['https://aka.ms/foundry-local-installer', 'https://learn.micro
     const found = await ev('window.api.ai.discover()');
     check('38 "find local servers" probes a few ports of this computer only; a server that needs a key is not listed', found.ok && Array.isArray(found.servers) && !found.servers.some((s) => s.port === llm.port), found);
 
-    /* ---------------- the settings dialog: Foundry Local is an explanation with links, not a form ---------------- */
+    /* ---------------- the settings dialog: Foundry Local is a panel with four steps (here without the extension: the first step is open) ---------------- */
     await ev('VE.ai.refresh()');
     await ev('VE.ai.openSettings()');
     await app.waitFor("!!document.querySelector('.form-grid select')", 10000, 'the settings dialog');
@@ -206,44 +219,52 @@ const FL_LINKS = ['https://aka.ms/foundry-local-installer', 'https://learn.micro
       const sel = document.querySelector('.form-grid select');
       sel.value = ${JSON.stringify(value)};
       sel.dispatchEvent(new Event('change', { bubbles: true }));
-      const card = document.querySelector('[data-web=foundry-local]');
+      const panel = document.querySelector('[data-fl=panel]');
       const save = Array.from(document.querySelectorAll('button.btn.primary')).find((b) => b.textContent === ${JSON.stringify(saveLabel)});
+      const steps = panel ? Array.from(panel.querySelectorAll('[data-fl-step]')).map((s) => ({ step: s.getAttribute('data-fl-step'), state: s.getAttribute('data-state'), title: s.querySelector('.ti').textContent })) : [];
+      const dl = panel ? panel.querySelector('a[data-fl=download]') : null;
       return {
         options: Array.from(sel.options).map((o) => o.value),
-        card: !!card && !card.hidden && card.isConnected,
-        links: card ? Array.from(card.querySelectorAll('a')).map((a) => ({ href: a.getAttribute('href'), target: a.getAttribute('target'), rel: a.getAttribute('rel') })) : [],
-        state: card ? card.querySelector('[data-web=fl-state]').textContent : '',
+        panel: !!panel && panel.isConnected && panel.offsetParent !== null,
+        title: panel ? panel.querySelector('.llm-title').textContent : '',
+        steps,
+        download: dl ? { href: dl.getAttribute('href'), download: dl.hasAttribute('download') } : null,
+        links: panel ? Array.from(panel.querySelectorAll('a')).map((a) => ({ href: a.getAttribute('href'), target: a.getAttribute('target'), rel: a.getAttribute('rel') })) : [],
+        commands: panel ? Array.from(panel.querySelectorAll('.flw-code')).map((c) => c.textContent) : [],
+        hasPortInput: panel ? !!panel.querySelector('[data-fl=port], [data-fl=use-port]') : false,
         saveDisabled: !!save && save.disabled,
         urlRows: Array.from(document.querySelectorAll('.form-grid input[type=text]')).filter((i) => !i.hidden && i.offsetParent !== null).length,
+        text: panel ? panel.textContent : '',
       };
     })()`);
-    const fl = await pick('foundrylocal');
-    check('39 the provider list has Foundry Local (an explanation) and the six providers that work from a browser', JSON.stringify(fl.options) === JSON.stringify(['foundrylocal', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local']), fl.options);
-    check('40 choosing it shows the card with the three official links (https, new tab, no opener), says why a page cannot connect, and there is nothing to save', fl.card && JSON.stringify(fl.links.map((l) => l.href).sort()) === JSON.stringify(FL_LINKS.slice().sort()) && fl.links.every((l) => l.target === '_blank' && /noopener/.test(l.rel || '') && /^https:\/\//.test(l.href)) && /CORS/.test(fl.state) && fl.saveDisabled && fl.urlRows === 0, fl);
+    let fl = await pick('foundrylocal');
+    // the panel asks the extension (hello, 1.5 s) and turns the first step to "to do" when nobody answers
+    await app.waitFor("(document.querySelector('[data-fl-step=ext]') || {}).getAttribute && document.querySelector('[data-fl-step=ext]').getAttribute('data-state') === 'todo'", 15000, 'the first step to show that the extension is missing');
+    fl = await pick('foundrylocal');
+    check('39 the provider list has Foundry Local and the six providers that work from a browser', JSON.stringify(fl.options) === JSON.stringify(['foundrylocal', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local']), fl.options);
+    check('40 choosing it shows the panel with four steps (extension, permission, Foundry Local, model); without the extension only the first is open, and there is no address / key form', fl.panel && fl.steps.map((s) => s.step).join() === 'ext,allow,server,model' && fl.steps[0].state === 'todo' && fl.steps.slice(1).every((s) => s.state === 'off') && fl.urlRows === 0 && !fl.saveDisabled, fl);
+    const FL_RELEASE = 'https://github.com/ahmetcanalaca/videoeditor/releases/tag/foundry-bridge-v1.0.0';
+    check('41 the first step offers the extension as a download from this site (a relative address: no third party), a how-to and how to check the zip (a command, and the release notes of this repository where its SHA-256 is written); the official Foundry Local page is the only other link; every link to another site is https, a new tab, noopener', fl.download && fl.download.href === 'extension/video-editor-foundry-bridge.zip' && fl.download.download === true && fl.links.filter((l) => l.target === '_blank').every((l) => (l.href === 'https://aka.ms/foundry-local-installer' || l.href === FL_RELEASE) && /noopener/.test(l.rel || '')) && fl.links.filter((l) => l.target === '_blank').length === 2 && fl.links.length === 3 && /Developer mode|Geliştirici modu/.test(fl.text) && fl.commands.includes('foundry server start') && fl.commands.includes('winget install Microsoft.FoundryLocal') && fl.commands.includes('Get-FileHash .\\video-editor-foundry-bridge.zip -Algorithm SHA256') && fl.hasPortInput === false, { download: fl.download, links: fl.links, commands: fl.commands });
     await app.screenshot(path.join(SHOTS, 'web-06-ai-settings-foundrylocal-tr-dark.png'));
     const lc = await pick('local');
-    check('41 choosing the model server of this computer takes the card away and the form is back', !lc.card && !lc.saveDisabled && lc.urlRows >= 1, lc);
+    check('42 choosing the model server of this computer takes the panel away and the form is back', !lc.panel && !lc.saveDisabled && lc.urlRows >= 1, lc);
     await ev('VE.modal.close()');
     await ev('VE.ai.close()');
-    // the same card in English, light theme (for the screenshot)
+    // the same panel in English, light theme (for the screenshot)
     await app.click('#lang-switch button[data-lang=en]');
     await app.click('#btn-theme');
     await ev('VE.ai.openSettings()');
     await app.waitFor("!!document.querySelector('.form-grid select')", 10000, 'the settings dialog (English)');
-    const flEn = await ev(`(() => {
-      const sel = document.querySelector('.form-grid select');
-      sel.value = 'foundrylocal';
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-      const card = document.querySelector('[data-web=foundry-local]');
-      return { title: card ? card.querySelector('.llm-title').textContent : '', links: card ? Array.from(card.querySelectorAll('a .lbl')).map((n) => n.textContent) : [] };
-    })()`);
-    check('42 in English the card is English (title and the three link labels)', /Foundry Local/.test(flEn.title) && flEn.links.length === 3 && flEn.links.every((s) => /[A-Za-z]/.test(s) && !/[ğüşıöçĞÜŞİÖÇ]/.test(s)), flEn);
+    await pick('foundrylocal');
+    await app.waitFor("(document.querySelector('[data-fl-step=ext]') || {}).getAttribute && document.querySelector('[data-fl-step=ext]').getAttribute('data-state') === 'todo'", 15000, 'the first step (English)');
+    const flEn = await pick('foundrylocal');
+    check('43 in English the panel is English (title, the four step names, the steps\' texts)', flEn.title === 'Connect Foundry Local' && flEn.steps.map((s) => s.title).join('|') === 'Browser extension|Permission for this site|Foundry Local|Model' && !/[ğüşıöçĞÜŞİÖÇ]/.test(flEn.text) && /Developer mode/.test(flEn.text), { title: flEn.title, steps: flEn.steps.map((s) => s.title), text: flEn.text.slice(0, 200) });
     await app.screenshot(path.join(SHOTS, 'web-09-ai-settings-foundrylocal-en-light.png'));
     await ev('VE.modal.close()');
     await app.click('#lang-switch button[data-lang=tr]');
     await app.click('#btn-theme');
 
-    check('43 no console errors during the whole run', app.errors.length === 0, app.errors);
+    check('44 no console errors during the whole run', app.errors.length === 0, app.errors);
   } finally {
     await app.close();
     await llm.stop();

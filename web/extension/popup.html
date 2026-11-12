@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Foundry Local bridge</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="popup">
+  <h1 data-t="pop.title"></h1>
+  <div class="card">
+    <div class="state" id="state"><span class="dot"></span><span id="stateText"></span></div>
+    <p class="muted" id="help" hidden></p>
+    <div class="row mt">
+      <button id="recheck" type="button" data-t="pop.recheck"></button>
+      <button id="scan" type="button" data-t="pop.scan"></button>
+    </div>
+    <p class="muted" data-t="pop.scanHint"></p>
+    <div class="row">
+      <label for="port" class="muted" data-t="pop.port"></label>
+      <input id="port" type="text" inputmode="numeric" maxlength="5" spellcheck="false" autocomplete="off">
+      <button id="usePort" type="button" data-t="pop.usePort"></button>
+    </div>
+    <div class="msg" id="msg"></div>
+    <p class="muted"><span data-t="pop.fixHint"></span> <code>foundry config set port 5272</code></p>
+  </div>
+  <h2 data-t="pop.sites"></h2>
+  <div class="card"><ul class="sites" id="sites"></ul><p class="muted" id="noSites" data-t="pop.noSites"></p></div>
+  <p class="foot"><span data-t="pop.foot"></span> · v<span id="ver"></span></p>
+  <script src="ui-i18n.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

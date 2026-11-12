@@ -56,8 +56,8 @@ const url = (rel) => pathToFileURL(path.join(WEB, rel)).href;
     check('bundle: shared model and agent-ops are loaded once and agent-ops uses that model', typeof core.model.createSegment === 'function' && typeof core.ops.Session === 'function', null);
     const settings = require(path.join(WEB, '..', 'src', 'main', 'settings'));
     const web = (await import(url('js/web/ai/constants.js'))).constants;
-    // (the desktop's "builtin" and "foundrylocal" start or reach a model on this computer: a page can do neither, see js/web/ai/constants.js)
-    const desktopOnly = ['builtin', 'foundrylocal'];
+    // (the desktop's "builtin" starts a model of its own on this computer: a page cannot; "foundrylocal" is reached through the browser extension)
+    const desktopOnly = ['builtin'];
     check('constants: providers, Content Understanding locations / analyzer rule equal the desktop settings', JSON.stringify(web.AI_PROVIDERS) === JSON.stringify(settings.AI_PROVIDERS.filter((p) => !desktopOnly.includes(p))) && web.AI_PROVIDERS.every((p) => !desktopOnly.includes(p)) && web.AI_PROVIDERS.includes(web.DEFAULT_PROVIDER) && JSON.stringify(web.CU_LOCATIONS) === JSON.stringify(settings.CU_LOCATIONS) && web.CU_ANALYZER_RE.source === settings.CU_ANALYZER_RE.source && web.CU_DEFAULT_ANALYZER === settings.CU_DEFAULT_ANALYZER, null);
   }
 

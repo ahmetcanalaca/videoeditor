@@ -12,7 +12,7 @@
 - 💻 **Windows kurulumu · Windows installer:** [Releases → son sürüm · latest release](https://github.com/ahmetcanalaca/videoeditor/releases/latest)
 - 📖 **Kılavuz · User guide:** [KULLANIM-KILAVUZU-USER-GUIDE.md](KULLANIM-KILAVUZU-USER-GUIDE.md)
 
-Sürüm · Version: Windows uygulaması · app **3.3.0** — web sürümü · web edition **4.2.0** — Lisans · Licence: [MIT](LICENSE)
+Sürüm · Version: Windows uygulaması · app **3.3.0** — web sürümü · web edition **4.3.0** — Lisans · Licence: [MIT](LICENSE)
 
 **Diller · Languages:** [🇹🇷 Türkçe](#tr) · [🇬🇧 English](#en)
 
@@ -52,7 +52,7 @@ Komutu yazarsınız, asistan zaman çizelgesini düzenler. Yaptığı her şey *
 | Seçenek | Anahtar | Videoya bakar mı? | Veriler nereye gider? |
 |---|---|---|---|
 | **Yerleşik yerel model** (Qwen3.5-4B), önerilen | gerekmez | **Evet** (kareleri tarar) | Hiçbir yere. Model ≈ 3,4 GB'tır, tek tıkla indirilir ve bilgisayarınızda çalışır |
-| **Foundry Local** (Microsoft) · *yeni, yalnızca Windows uygulamasında* | gerekmez | **Evet** (görüntüye bakan modelle, örn. `qwen3.5-4b`) | Yalnızca bu bilgisayar. Foundry Local'i Microsoft'tan siz kurarsınız (aşağıda) |
+| **Foundry Local** (Microsoft) · *yeni* | gerekmez | **Evet** (görüntüye bakan modelle, örn. `qwen3.5-4b`) | Yalnızca bu bilgisayar. Windows uygulamasında doğrudan, **web sürümünde küçük bir tarayıcı eklentisiyle**. Foundry Local'i Microsoft'tan siz kurarsınız (aşağıda) |
 | Diğer yerel sunucular (Ollama, LM Studio, llama.cpp) | gerekmez | modele bağlı | Yalnızca bu bilgisayar |
 | OpenAI · Azure OpenAI · Microsoft Foundry · Anthropic · Gemini | kendi anahtarınız (Foundry'de Entra ID de olur) | hayır (yalnızca metin) | Komutunuz ve zaman çizelgesinin metin özeti → seçtiğiniz sağlayıcı |
 | Foundry + **Content Understanding** (isteğe bağlı) | kendi Foundry kaynağınız | içeriğini okur: sahneler ve konuşma | **Her seferinde onayınızla** videonun küçültülmüş kopyası → kendi Azure kaynağınız |
@@ -66,7 +66,16 @@ Komutu yazarsınız, asistan zaman çizelgesini düzenler. Yaptığı her şey *
 
 Sunucuyu uygulama gerektiğinde başlatır (30 dakika kullanılmazsa kapanır). Ayrıntı, sınırlar ve gerçek deneme sonuçları: [kılavuz 5.7](KULLANIM-KILAVUZU-USER-GUIDE.md). ⚠️ Foundry Local'in sunucusu anahtar istemez: paylaşılan bir Windows'ta anahtarla korunan yerleşik modeli tercih edin.
 
-- **Web sürümünde** Foundry Local kullanılamaz (sunucusu tarayıcıların istediği CORS başlıklarını göndermiyor); asistan orada bulut sağlayıcılarıyla ve tarayıcılara izin veren yerel sunucularla (Ollama, LM Studio) çalışır. Foundry Local için Windows uygulamasını kullanın.
+**Web sürümünde Foundry Local** (yeni, web 4.3): web sayfaları Foundry Local'e doğrudan bağlanamaz (sunucusu CORS başlığı göndermez); bu yüzden bir kez **küçük bir Edge / Chrome eklentisi** kurarsınız.
+
+1. Foundry Local'i kurun ve modeli bir kez indirin: `winget install Microsoft.FoundryLocal`, sonra `foundry model download qwen3.5-4b`.
+2. Web sürümünde **AI** → ⚙ → Sağlayıcı: **Foundry Local**. Dört adım sırayla kendiliğinden yeşile döner: **eklenti** (panel zip'i indirtir; `edge://extensions` → Geliştirici modu → *Paketlenmemiş öğe yükle*) → **izin** (eklentinin kendi penceresinde, siteye bir kez) → **Foundry Local** (`foundry server start`; port değişirse *Otomatik bul*) → **model** (`qwen3.5-4b` yazıp *Yükle ve kullan*).
+3. Hazır: *"köpeği yakınlaştır"* gibi komutlar çalışır. Her şey bu bilgisayarda kalır; eklenti yalnızca bu siteden gelen dört bilinen isteği `127.0.0.1`'e iletir ([ayrıntı ve güvenlik](web/extension/README.md)). Şirket bilgisayarında Geliştirici modu kapalıysa BT biriminden eklentiyi onaylamasını isteyin ya da Windows uygulamasını kullanın.
+
+<p align="center">
+  <img src="docs/screenshots/web-10-foundrylocal-ready-tr-dark.png" alt="Web sürümünde Foundry Local: dört adım yeşil" width="49%">
+  <img src="docs/screenshots/web-11-foundrylocal-zoom-tr-dark.png" alt="Yerel modelle 'Köpeği yakınlaştır'" width="49%">
+</p>
 - Foundry + Content Understanding, resmî belgelere göre yazıldı ve sahte sunucuyla sınandı; **gerçek bir Azure kaynağıyla henüz doğrulanmadı.** Yeni: zoom nesnenin *yerine* kilitlenebilir; bunun için birkaç küçük resim yalnızca ayrıca onayladığınızda sohbet modelinize gösterilir.
 - Asistan hata yapabilir; sonucu kontrol edin.
 
@@ -135,7 +144,7 @@ You type a command and the assistant edits the timeline. Everything it did is **
 | Option | Key | Looks at the video? | Where does the data go? |
 |---|---|---|---|
 | **Built-in local model** (Qwen3.5-4B), recommended | not needed | **Yes** (scans frames) | Nowhere. The model is ≈ 3.4 GB, downloaded with one click, and runs on your computer |
-| **Foundry Local** (Microsoft) · *new, Windows app only* | not needed | **Yes** (with a model that sees pictures, e.g. `qwen3.5-4b`) | This computer only. You install Foundry Local from Microsoft (below) |
+| **Foundry Local** (Microsoft) · *new* | not needed | **Yes** (with a model that sees pictures, e.g. `qwen3.5-4b`) | This computer only. Directly in the Windows app, **through a small browser extension in the web edition**. You install Foundry Local from Microsoft (below) |
 | Other local servers (Ollama, LM Studio, llama.cpp) | not needed | depends on the model | This computer only |
 | OpenAI · Azure OpenAI · Microsoft Foundry · Anthropic · Gemini | your own key (Entra ID also works with Foundry) | no (text only) | Your command and a text summary of the timeline → the provider you chose |
 | Foundry + **Content Understanding** (optional) | your own Foundry resource | reads the content: scenes and speech | **Each time with your permission**, a reduced copy of the video → your own Azure resource |
@@ -149,7 +158,16 @@ You type a command and the assistant edits the timeline. Everything it did is **
 
 The app starts the server when needed (it stops after 30 minutes without use). Details, limits and the real-trial results: [guide 5.7](KULLANIM-KILAVUZU-USER-GUIDE.md). ⚠️ Foundry Local's server takes no key: on a shared Windows prefer the built-in model, which is protected by a key.
 
-- **In the web edition** Foundry Local cannot be used (its server does not send the CORS headers browsers require); there the assistant works with cloud providers and with local servers that allow browsers (Ollama, LM Studio). Use the Windows app for Foundry Local.
+**Foundry Local in the web edition** (new, web 4.3): a web page cannot connect to Foundry Local directly (its server sends no CORS headers), so you install **a small Edge / Chrome extension** once.
+
+1. Install Foundry Local and download the model once: `winget install Microsoft.FoundryLocal`, then `foundry model download qwen3.5-4b`.
+2. In the web edition press **AI** → ⚙ → Provider: **Foundry Local**. Four steps turn green one after the other: **extension** (the panel offers the zip; `edge://extensions` → Developer mode → *Load unpacked*) → **permission** (once per site, in the extension's own window) → **Foundry Local** (`foundry server start`; *Find automatically* if the port changed) → **model** (type `qwen3.5-4b`, press *Load and use*).
+3. Ready: commands such as *"zoom in on the dog"* work. Everything stays on this computer; the extension only passes four known requests from this site to `127.0.0.1` ([details and security](web/extension/README.md)). If Developer mode is switched off on a company computer, ask IT to approve the extension or use the Windows app.
+
+<p align="center">
+  <img src="docs/screenshots/web-09-ai-settings-foundrylocal-en-light.png" alt="Foundry Local in the web edition: four steps green" width="49%">
+  <img src="docs/screenshots/web-11-foundrylocal-zoom-tr-dark.png" alt="'Zoom in on the dog' with a local model" width="49%">
+</p>
 - Foundry + Content Understanding was written from the official documentation and tested against a mock server; it has **not yet been verified against a real Azure resource.** New: the zoom can lock onto the *position* of an object; for that a few small pictures are shown to your chat model only when you confirm it separately.
 - The assistant can make mistakes; check the result.
 

@@ -23,3 +23,32 @@ dialog.ve-msgbox::backdrop { background: var(--scrim); }
 #web-unsupported .box { max-width: 520px; display: flex; flex-direction: column; gap: 10px; }
 #web-unsupported b { font-size: 18px; }
 #web-unsupported .hint { color: var(--text-dim); }
+
+/* Foundry Local setup panel of the AI settings (js/web/ai/flpanel.js): four steps that turn green one after the other */
+.flw-panel { gap: 10px; }
+.flw-steps { display: flex; flex-direction: column; gap: 8px; }
+.flw-step { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 8px; row-gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-elev); }
+.flw-step[data-state="ok"] { border-color: var(--success); }
+.flw-step[data-state="busy"] { border-color: var(--accent); }
+.flw-step[data-state="warn"] { border-color: var(--warning); }
+.flw-step[data-state="off"] { opacity: 0.55; }
+.flw-num { grid-row: 1; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--bg-active); color: var(--text-dim); }
+.flw-step[data-state="ok"] .flw-num { background: var(--success); color: #fff; }
+.flw-step[data-state="busy"] .flw-num { background: var(--accent); color: var(--accent-fg); }
+.flw-step[data-state="warn"] .flw-num { background: var(--warning); color: #fff; }
+.flw-head { grid-column: 2; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-weight: 600; min-width: 0; }
+.flw-head .st { font-weight: 500; font-size: 12px; color: var(--text-dim); text-align: right; overflow-wrap: anywhere; }
+.flw-step[data-state="ok"] .st { color: var(--success); }
+.flw-step[data-state="warn"] .st { color: var(--warning); }
+.flw-body { grid-column: 2; display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.flw-body[hidden] { display: none; }
+.flw-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.flw-cmd { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.flw-code { font: 12px/1.4 Consolas, "Cascadia Mono", monospace; padding: 2px 6px; border-radius: 6px; background: var(--bg-active); border: 1px solid var(--border); user-select: all; overflow-wrap: anywhere; }
+.flw-link { color: var(--accent-text); }
+.flw-how summary { cursor: pointer; color: var(--accent-text); }
+.flw-how ol { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.flw-how .hint { margin-left: 0; }
+.flw-panel .btn.small { height: 24px; padding: 0 8px; font-size: 11px; }
+.flw-panel a.btn { text-decoration: none; }
+.flw-panel .path-row input[list] { flex: 1 1 auto; }

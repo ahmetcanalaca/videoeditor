@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Foundry Local bridge</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <h1 id="title" data-t="con.title"></h1>
+  <div id="ask" hidden>
+    <p class="muted"><span data-t="con.site"></span></p>
+    <div class="origin" id="origin"></div>
+    <p data-t="con.body"></p>
+    <p class="muted" data-t="con.note"></p>
+    <div class="actions">
+      <button id="deny" type="button" data-t="con.deny"></button>
+      <button id="allow" class="primary" type="button" data-t="con.allow"></button>
+    </div>
+  </div>
+  <p id="expired" hidden data-t="con.expired"></p>
+  <script src="ui-i18n.js"></script>
+  <script src="consent.js"></script>
+</body>
+</html>

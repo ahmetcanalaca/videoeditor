@@ -94,19 +94,24 @@ function connectCdp(wsUrl) {
   });
 }
 
-// opts: { url, userData?, headless?, width?, height?, args?, ready? (expression that must become truthy) }
+// opts: { url, userData?, headless?, width?, height?, args?, ready? (expression that must become truthy), extensions? (folders of unpacked extensions to load) }
 async function launch(opts) {
   const o = opts || {};
   const port = await freePort();
   const userData = o.userData || fs.mkdtempSync(path.join(os.tmpdir(), 've-web-'));
   const exe = findBrowser();
+  const extensions = (o.extensions || []).filter(Boolean);
+  // (a single --disable-features: when a switch is given twice only one of them counts)
+  const features = ['Translate', 'msEdgeSidebar', 'EdgeFirstRunExperience'].concat(extensions.length ? ['DisableLoadExtensionCommandLineSwitch'] : []);
   const args = [
     '--remote-debugging-port=' + port,
     '--user-data-dir=' + userData,
-    '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync', '--disable-background-networking',
-    '--autoplay-policy=no-user-gesture-required', '--disable-features=Translate,msEdgeSidebar,EdgeFirstRunExperience',
+    '--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-background-networking',
+    '--autoplay-policy=no-user-gesture-required', '--disable-features=' + features.join(','),
     '--window-size=' + (o.width || 1366) + ',' + (o.height || 820),
   ];
+  if (extensions.length) args.push('--load-extension=' + extensions.join(','), '--disable-extensions-except=' + extensions.join(','));
+  else args.push('--disable-extensions');
   if (o.headless !== false) args.push('--headless=new');
   // extra flags for the environment (CI: VE_BROWSER_FLAGS=--no-sandbox, a hosted runner does not allow the browser's own sandbox)
   (process.env.VE_BROWSER_FLAGS || '').split(/\s+/).filter(Boolean).forEach((a) => args.push(a));
@@ -150,8 +155,8 @@ async function launch(opts) {
 
   const app = {
     port, child, cdp, errors, consoleLog, requests, userData, log, exe,
-    async evaluate(expression) {
-      const r = await cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    async evaluate(expression, extra) {
+      const r = await cdp.send('Runtime.evaluate', Object.assign({ expression, awaitPromise: true, returnByValue: true }, extra || {}));
       if (r.exceptionDetails) {
         const d = r.exceptionDetails;
         throw new Error('evaluate failed: ' + ((d.exception && d.exception.description) || d.text) + '\n' + expression.slice(0, 300));
@@ -226,6 +231,24 @@ async function launch(opts) {
       if (!o.userData) { try { fs.rmSync(userData, { recursive: true, force: true }); } catch (e) { /* leftovers are in TEMP */ } }
     },
     exited: () => exited,
+    // the other targets of the browser (service workers and pages of extensions, popups) and a way to run code in one of them
+    async targets() { return getJson('http://127.0.0.1:' + port + '/json/list'); },
+    async attach(t) {
+      const c = await connectCdp(t.webSocketDebuggerUrl);
+      await c.send('Runtime.enable');
+      return {
+        cdp: c,
+        async evaluate(expression, extra) {
+          const r = await c.send('Runtime.evaluate', Object.assign({ expression, awaitPromise: true, returnByValue: true }, extra || {}));
+          if (r.exceptionDetails) {
+            const d = r.exceptionDetails;
+            throw new Error('evaluate failed: ' + ((d.exception && d.exception.description) || d.text) + '\n' + expression.slice(0, 300));
+          }
+          return r.result.value;
+        },
+        close() { c.close(); },
+      };
+    },
   };
   if (o.url) await app.navigate(o.url, o.ready);
   return app;

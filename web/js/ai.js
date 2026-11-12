@@ -8,7 +8,7 @@
   const t = (key, vars) => VE.i18n.t(key, vars);
   const api = window.api;
 
-  // "foundrylocal" is not a provider here but an explanation: a web page cannot reach Foundry Local (its server sends no CORS headers), see buildSettings
+  // (the desktop app's "builtin" - the model it downloads and starts itself - does not exist in the browser; "foundrylocal" has its own setup panel, see buildSettings)
   const PROVIDERS = ['foundrylocal', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
   const PROV_KEYS = { foundrylocal: 'aiset.prov.foundrylocal', openai: 'aiset.prov.openai', azure: 'aiset.prov.azure', foundry: 'aiset.prov.foundry', anthropic: 'aiset.prov.anthropic', gemini: 'aiset.prov.gemini', local: 'aiset.prov.local' };
   const HINT_KEYS = { foundrylocal: 'aiset.hint.foundrylocal', openai: 'aiset.hint.openai', azure: 'aiset.hint.azure', foundry: 'aiset.hint.foundry', anthropic: 'aiset.hint.anthropic', gemini: 'aiset.hint.gemini', local: 'aiset.hint.local' };
@@ -18,14 +18,13 @@
     anthropic: 'https://api.anthropic.com', gemini: 'https://generativelanguage.googleapis.com', local: 'http://127.0.0.1:11434/v1',
   };
   const MODEL_HINT = { foundrylocal: '', openai: 'gpt-4o-mini', azure: 'my-deployment', foundry: 'my-deployment', anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-flash', local: 'qwen2.5:3b' };
-  // the official places for Foundry Local and for the desktop app (the explanation shows them as links; https only, opened in a new tab)
-  const FL_LINKS = { install: 'https://aka.ms/foundry-local-installer', docs: 'https://learn.microsoft.com/azure/foundry-local/get-started', desktop: 'https://github.com/ahmetcanalaca/videoeditor/releases/latest' };
   // problems the user can fix in the settings dialog (the error card then offers a shortcut)
   const FIXABLE = ['AUTH', 'FORBIDDEN', 'NO_KEY', 'NOT_CONFIGURED', 'KEY_MISMATCH', 'NOT_FOUND', 'NO_TOOLS', 'URL', 'URL_EMPTY', 'URL_INVALID', 'URL_SCHEME', 'URL_CREDENTIALS', 'URL_NOT_LOCAL',
     'ENTRA_NOT_CONFIRMED', 'ENDPOINT_NOT_CONFIRMED',
-    'CU_NO_ENDPOINT', 'CU_ORIGIN_MISMATCH', 'CU_NOT_CONFIRMED', 'CU_URL_INVALID', 'CU_URL_SCHEME', 'CU_URL_CREDENTIALS', 'CU_ANALYZER_INVALID', 'CU_NO_ANALYZER', 'CU_NO_DEFAULTS', 'CU_LOCATION'];
+    'CU_NO_ENDPOINT', 'CU_ORIGIN_MISMATCH', 'CU_NOT_CONFIRMED', 'CU_URL_INVALID', 'CU_URL_SCHEME', 'CU_URL_CREDENTIALS', 'CU_ANALYZER_INVALID', 'CU_NO_ANALYZER', 'CU_NO_DEFAULTS', 'CU_LOCATION',
+    'FL_NO_BRIDGE', 'FL_BRIDGE_OLD', 'FL_NOT_APPROVED', 'FL_NOT_FOUND', 'FL_LOAD_FAILED', 'FL_NOT_DOWNLOADED', 'FL_BAD_MODEL'];
   const EXAMPLES = ['ai.ex1', 'ai.ex2', 'ai.ex3', 'ai.ex4', 'ai.ex5'];
-  // what the assistant can do with the video's CONTENT (the desktop app's models that look at pictures: not in the browser)
+  // what the assistant can do with the video's CONTENT (a Foundry Local model that looks at pictures)
   const VISION_EXAMPLES = ['ai.exv1', 'ai.exv2', 'ai.exv3'];
   // ... and with an analysis by Azure Content Understanding (what is shown AND said)
   const CU_EXAMPLES = ['ai.exc1', 'ai.exc2', 'ai.exc3'];
@@ -89,6 +88,7 @@
     const s = state.status;
     const tries = [];
     if (s && s.provider === 'local') tries.push('ai.err.' + code + '_LOCAL');
+    if (s && s.provider === 'foundrylocal') tries.push('ai.err.' + code + '_FL');
     if (s && s.auth === 'entra') tries.push('ai.err.' + code + '_ENTRA');
     tries.push('ai.err.' + code);
     for (const key of tries) {
@@ -101,7 +101,7 @@
   // errors the settings dialog can fix; for a model server on this computer an unreachable server is one of them (not started, wrong port)
   function isFixable(code) {
     const s = state.status;
-    return FIXABLE.includes(code) || ((code === 'NETWORK' || code === 'TIMEOUT') && !!s && s.provider === 'local');
+    return FIXABLE.includes(code) || ((code === 'NETWORK' || code === 'TIMEOUT') && !!s && (s.provider === 'local' || s.provider === 'foundrylocal'));
   }
 
   /* ---------- rendering ---------- */
@@ -213,7 +213,8 @@
     const s = live.search;
     let label = t('ai.working');
     let ratio = null;
-    if (live.analysis) {
+    if (live.phase === 'starting' || live.phase === 'loading') { const key = 'ai.fl.' + live.phase; label = t(key); }
+    else if (live.analysis) {
       label = analysisLabel(live.analysis);
       if (live.analysis.phase === 'prepare') ratio = live.analysis.fraction || 0;
     } else if (s) {
@@ -347,12 +348,15 @@
     r.input.value = '';
     autosize();
     state.running = true;
-    state.live = { actions: [], search: null, found: [], analysis: null, analyses: [] };
+    state.live = { actions: [], search: null, found: [], analysis: null, analyses: [], phase: null };
     const runId = ++state.runId;
     const base = S.segments;
     renderAll();
     const off = api.on('ai:step', (ev) => {
       if (!ev || ev.runId !== runId || !state.live) return;
+      // Foundry Local: loading the model (shown until the first real step arrives)
+      if (ev.kind === 'phase') state.live.phase = ev.phase === 'starting' || ev.phase === 'loading' ? ev.phase : null;
+      else state.live.phase = null;
       if (ev.kind === 'action') state.live.actions.push(ev.action);
       else if (ev.kind === 'reset') state.live.actions = [];
       else if (ev.kind === 'search') state.live.search = ev.phase === 'done' ? null : { object: ev.object, position: ev.position, phase: ev.phase, done: ev.done, total: ev.total };
@@ -459,9 +463,9 @@
     const keyHint = el('div', { class: 'hint' });
     const canEntra = () => provider.value === 'azure' || provider.value === 'foundry';
     const entra = () => canEntra() && auth.value === 'entra';
-    // "Foundry Local" is an explanation here, not a provider: a web page cannot reach it (see the card below)
-    const info = () => provider.value === 'foundrylocal';
-    const panelled = () => info();
+    // Foundry Local brings its own panel (the steps to connect it) instead of an address, a model name and a key
+    const fl = () => provider.value === 'foundrylocal';
+    const panelled = () => fl();
 
     const syncAuth = () => {
       // web edition: "entra" is an access token that is pasted like a key (there is no Azure CLI in a browser), so the key row stays
@@ -479,19 +483,17 @@
       model.placeholder = MODEL_HINT[p];
       modelLabel.textContent = t(p === 'azure' || p === 'foundry' ? 'aiset.modelAzure' : 'aiset.model');
       providerHint.textContent = t(HINT_KEYS[p]);
-      // Foundry Local has no address, model name or key here: it is an explanation with links, and there is nothing to save
+      // Foundry Local has no address, model name or key here: its panel (made the first time it is chosen) walks through the steps instead
       urlRow.forEach((n) => { n.hidden = panelled(); });
       modelLabel.hidden = model.hidden = panelled();
       verRow.forEach((n) => { n.hidden = p !== 'azure'; });
       authRow.forEach((n) => { n.hidden = !canEntra(); });
       find.hidden = p !== 'local';
       found.hidden = found.hidden || p !== 'local';
-      flWrap.hidden = !info();
-      if (info()) { if (!flWrap.isConnected) grid.after(flWrap); } else flWrap.remove();
+      if (fl()) { ensureFlPanel(); if (!flWrap.isConnected) grid.after(flWrap); } else flWrap.remove();
       shareRow.hidden = panelled();
-      note.hidden = info();
-      saveBtn.disabled = info();
-      warn.hidden = info() || status.encryptionAvailable !== false;
+      note.hidden = fl();
+      warn.hidden = fl() || status.encryptionAvailable !== false;
       if (!canEntra()) auth.value = 'key';
       syncAuth();
       syncCu(state.status || status);
@@ -504,22 +506,21 @@
     };
     const say = (kind, text) => { result.hidden = !text; result.className = 'ai-result ' + kind; result.textContent = text || ''; };
 
-    // Foundry Local (Microsoft's runtime for models on this computer) runs the models of the desktop app; its server sends no CORS headers, so a web page cannot talk to it.
-    // The card says so and gives the official places (https only, new tab) instead of a form that could only fail.
-    const flLink = (href, label, primary, iconName) => el('a', { class: 'btn ' + (primary ? 'primary' : 'outline'), href, target: '_blank', rel: 'noopener noreferrer' }, [icon(iconName), el('span', { class: 'lbl', text: label })]);
-    const flWrap = el('div', { class: 'llm-wrap', 'data-web': 'foundry-local' }, [
-      el('div', { class: 'llm-panel' }, [
-        el('div', { class: 'llm-title', text: t('web.fl.title') }),
-        el('div', { class: 'llm-state warn', 'data-web': 'fl-state', text: t('web.fl.state') }),
-        el('div', { class: 'hint', text: t('web.fl.why') }),
-        el('div', { class: 'llm-actions' }, [
-          flLink(FL_LINKS.desktop, t('web.fl.desktop'), true, 'download'),
-          flLink(FL_LINKS.install, t('web.fl.get'), false, 'download'),
-          flLink(FL_LINKS.docs, t('web.fl.docs'), false, 'info'),
-        ]),
-        el('div', { class: 'about-note', text: t('web.fl.alt') }),
-      ]),
-    ]);
+    // Foundry Local: the steps to connect it (browser extension, permission, Foundry Local, model; see js/web/ai/flpanel.js); made when it is first chosen
+    let flPanel = null;
+    const flWrap = el('div', { class: 'llm-wrap', 'data-fl': 'wrap' });
+    const ensureFlPanel = () => {
+      if (flPanel) return flPanel;
+      flPanel = VE.web.flPanel.panel({
+        getSavedModel: () => (state.status && state.status.provider === 'foundrylocal' ? state.status.model : (status.provider === 'foundrylocal' ? status.model : '')),
+        getStatus: () => state.status || status,
+        say,
+        errorText,
+        onUsed: (st2) => { if (st2) { state.status = st2; renderAll(); } },
+      });
+      flWrap.append(flPanel.node);
+      return flPanel;
+    };
 
     const grid = el('div', { class: 'form-grid' }, [
       ...row(t('aiset.provider'), provider),
@@ -640,6 +641,14 @@
     async function saveAndTest() {
       saveBtn.disabled = true; clear.disabled = true;
       say('busy', t('aiset.testing'));
+      if (fl()) {
+        // Foundry Local: the model is loaded and tried by the panel ("Load and use"); the dialog's button does the same
+        saveBtn.disabled = false; clear.disabled = false;
+        const choice = flPanel ? flPanel.getModel() : '';
+        if (!choice) { say('err', t('flw.model.hint')); return; }
+        await flPanel.apply();
+        return;
+      }
       const cuReq = provider.value === 'foundry' ? { enabled: cuOn.checked, endpoint: cuEndpoint.value, analyzer: cuAnalyzer.value, location: cuLocation.value } : undefined;
       const saved = await api.ai.save({ provider: provider.value, baseUrl: url.value, model: model.value, apiVersion: version.value, shareNames: share.checked, auth: auth.value, apiKey: key.value, cu: cuReq });
       // a rejected save keeps what was typed so it can be corrected; the secret leaves the DOM as soon as the main process has it
@@ -682,8 +691,8 @@
     key.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveAndTest(); } });
 
     const body = el('div', { style: { display: 'contents' } }, [providerHint, grid, found, models, keyHint, authHint, shareRow, warn, cuWrap, note, result]);
-    syncProvider(); // again, now that the dialog has a place to put the Foundry Local card
-    VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn] });
+    syncProvider(); // again, now that the dialog has a place to put the Foundry Local panel
+    VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn], onClose: () => { if (flPanel) flPanel.destroy(); } });
   }
 
   /* ---------- wiring ---------- */

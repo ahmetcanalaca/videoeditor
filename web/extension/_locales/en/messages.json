@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Video Editor – Foundry Local bridge",
+    "description": "Name of the extension (45 characters at most)"
+  },
+  "extDesc": {
+    "message": "Lets the Video Editor web app use Foundry Local on this computer. It talks to 127.0.0.1 only; nothing leaves your computer.",
+    "description": "Short description (132 characters at most)"
+  }
+}

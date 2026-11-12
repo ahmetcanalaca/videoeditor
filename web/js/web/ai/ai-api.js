@@ -2,11 +2,13 @@
   'use strict';
   // The assistant of the web edition: window.api.ai, the browser side of what the desktop app's main process does (src/main/ai/ipc.js). The agent loop, the
   // provider adapters and the video-analysis client ARE the desktop code (bundled unchanged, see js/web/ai/desktop-core.js); this file is the glue: settings,
-  // the key, which addresses may be contacted, and running a request. (Foundry Local, which the desktop app runs models with, cannot be reached from a page:
-  // its server sends no CORS headers. The settings dialog says so and points to the desktop app.)
+  // the key, which addresses may be contacted, and running a request. Foundry Local, which the desktop app runs models with, sends no CORS headers, so a page
+  // cannot read its answers: it is reached through a small browser extension (extension/, js/web/ai/fl-bridge.js) that the user installs and approves, and that
+  // can ask Foundry Local for four things only. window.api.fl is the page's side of that (the setup panel of the settings dialog).
   //
   // Where things go: every request leaves through the network worker (js/web/ai/net.js), which can reach only the providers' own addresses, this
-  // computer, and the https addresses the user allowed here. Nothing is sent before the user has chosen a provider.
+  // computer, and the https addresses the user allowed here; the requests to Foundry Local leave through the extension, to this computer only. Nothing is
+  // sent before the user has chosen a provider.
   const VEW = window.VE.web;
   const api = window.api;
 
@@ -18,6 +20,13 @@
   const LOCAL_RUN_TIMEOUT_MS = 10 * 60 * 1000;
   const CU_ANALYSIS_TIMEOUT_MS = 60 * 60 * 1000;
   const CU_TEST_TIMEOUT_MS = 45 * 1000;
+  // Foundry Local (through the extension): a model has to be loaded first and answers slowly on a CPU, and a model that sees pictures looks at the video for
+  // minutes - the same figures as the desktop app (src/main/ai/ipc.js)
+  const FL_TEST_TIMEOUT_MS = 12 * 60 * 1000;
+  const FL_RUN_TIMEOUT_MS = 45 * 60 * 1000;
+  const FL_VISION_FRAMES = 60;
+  const FL_VISION_MAX_CALLS = 400;
+  const FL_CATALOG_MS = 30 * 1000; // how long the list of models is kept (it has a hundred entries and does not change while Foundry Local runs)
   // the chat models whose adapters pass a picture on (the others - Anthropic, Gemini - read text only, so they are not offered locate_in_video)
   const LOCATE_PROVIDERS = ['foundry', 'azure', 'openai'];
   const SEG_KEYS = ['id', 'mediaId', 'in', 'out', 'speed', 'zoomFrom', 'zoomTo', 'fx', 'fy', 'volume', 'mute', 'fadeIn', 'fadeOut'];
@@ -55,14 +64,20 @@
   function sanitize(raw) {
     const o = raw && typeof raw === 'object' ? raw : {};
     const cu = o.cu && typeof o.cu === 'object' ? o.cu : {};
+    const fv = o.flVision && typeof o.flVision === 'object' ? o.flVision : {};
+    const provider = K.C.AI_PROVIDERS.includes(o.provider) ? o.provider : K.C.DEFAULT_PROVIDER;
+    const model = str(o.model, 200);
     return {
-      provider: K.C.AI_PROVIDERS.includes(o.provider) ? o.provider : K.C.DEFAULT_PROVIDER,
+      provider,
       // 'entra' = an access token (Microsoft Entra ID) pasted instead of an API key; it travels as "Authorization: Bearer ..."
       auth: o.auth === 'entra' ? 'entra' : 'key',
       baseUrl: str(o.baseUrl, 300),
-      model: str(o.model, 200),
+      // a Foundry Local model is an id or alias as `foundry model list` shows it (nothing else is ever put into a request path)
+      model: provider === 'foundrylocal' && !K.FL.validId(model) ? '' : model,
       apiVersion: str(o.apiVersion, 40),
       shareNames: o.shareNames !== false,
+      // whether the Foundry Local model that is set up can look at pictures (found out by asking it once; only counts for that very model)
+      flVision: { model: K.FL.validId(fv.model) ? fv.model : '', ok: fv.ok === true },
       cu: {
         enabled: cu.enabled === true,
         endpoint: str(cu.endpoint, 300),
@@ -84,8 +99,8 @@
 
   async function ensure() {
     if (K) return K;
-    const [core, constants] = await Promise.all([import('./desktop-core.js'), import('./constants.js')]);
-    K = { core, C: constants.constants };
+    const [core, constants, fl] = await Promise.all([import('./desktop-core.js'), import('./constants.js'), import('./fl-local.js')]);
+    K = { core, C: constants.constants, FL: fl };
     // the pairing key of the Local AI helper of earlier versions (a secret for a program that is gone): not kept any longer
     try { localStorage.removeItem('ve.web.ai.helper.v1'); } catch (e) { /* storage not available */ }
     settings = sanitize(readJson(localStorage, LS_SETTINGS));
@@ -116,12 +131,16 @@
   }
 
   function credentialOf(ai) {
+    // Foundry Local takes no key (and a browser extension, not this page, talks to it)
+    if (ai.provider === 'foundrylocal') return 'none';
     if (ai.provider === 'local') return 'optional';
     if (ai.auth === 'entra' && (ai.provider === 'azure' || ai.provider === 'foundry')) return 'entra';
     return 'key';
   }
 
   function effectiveUrl(ai) {
+    // Foundry Local has no address here: the extension finds it, and the page never names one
+    if (ai.provider === 'foundrylocal') return { ok: true, url: '', origin: '', local: true };
     return K.core.net.validateBaseUrl(ai.baseUrl || K.core.providers.DEFAULT_BASE_URLS[ai.provider] || '');
   }
 
@@ -130,7 +149,7 @@
   // go to, so the user says yes once. While a key is being entered (`always`) the user is asked even when the address is on the saved list: every GitHub
   // Pages site of an account shares this browser storage, so another page could have put an address there, and the key is only kept for the tab anyway.
   function endpointNeedsOk(provider, url, always) {
-    if (provider === 'local' || !url || !url.ok || url.local) return false;
+    if (provider === 'local' || provider === 'foundrylocal' || !url || !url.ok || url.local) return false;
     if (VEW.net.wellKnown.indexOf(url.origin) >= 0) return false;
     return !!always || !VEW.net.trust.has(url.origin);
   }
@@ -154,11 +173,12 @@
 
   function status() {
     const ai = settings;
+    const fl = ai.provider === 'foundrylocal';
     const url = effectiveUrl(ai);
     const credential = credentialOf(ai);
     const urlError = url.ok ? (ai.provider === 'local' && !url.local ? 'URL_NOT_LOCAL' : '') : url.code;
     // A key is only valid for the endpoint it was entered for: changing the endpoint without a new key must never send it elsewhere.
-    const keyMismatch = !!vault.key && url.ok && vault.origin !== url.origin;
+    const keyMismatch = !fl && !!vault.key && url.ok && vault.origin !== url.origin;
     let needs = null;
     if (credential === 'key' && !vault.key) needs = 'key';
     else if (credential === 'entra' && !vault.key) needs = 'key';
@@ -186,8 +206,9 @@
       // the sign-in with an access token needs no command line tool on this computer
       azCli: true,
       ready: needs === null,
-      // a browser has no model that looks at the video by itself (find_in_video is for the desktop app's models); with a Foundry analysis it can still read it
-      vision: false,
+      // A Foundry Local model that takes pictures looks at the video itself (find_in_video, like in the desktop app). Otherwise a browser has no model that does;
+      // with a Foundry analysis it can still read the video.
+      vision: fl && !!ai.model && ai.flVision.ok && ai.flVision.model === ai.model,
       cu: cuStatus(ai, url, credential, keyMismatch, needs === null),
     };
   }
@@ -238,12 +259,53 @@
 
   function providerFor(st, opts) {
     const o = opts || {};
+    if (st.provider === 'foundrylocal') return flProvider(st.model, o);
     const origin = effectiveUrl(settings).origin;
     // the key / token is handed out for the address it was entered for only
     const apiKey = st.hasKey && !st.keyMismatch && vault.origin === origin ? vault.key : '';
     return K.core.providers.createProvider({
       kind: st.provider, baseUrl: st.effectiveBaseUrl, model: st.model || (o.listOnly ? 'model-list' : ''), apiKey, bearer: st.credential === 'entra', fetch: fetchFor(st.provider), apiVersion: st.apiVersion || undefined,
     });
+  }
+
+  /* ------------------------------------------------------------------ Foundry Local (through the browser extension) */
+
+  // The provider of the assistant for a Foundry Local model: the desktop code's "local" adapter in its Foundry flavor, whose fetch is the extension's bridge (the
+  // address in baseUrl is a placeholder: the extension knows where Foundry Local is and the page never names an address), wrapped so that a model that is not loaded
+  // gets loaded (js/web/ai/fl-local.js). o: { onPhase?, signal? }
+  function flProvider(model, o) {
+    const inner = K.core.providers.createProvider({
+      kind: 'local', baseUrl: 'http://127.0.0.1:5272/v1', model, apiKey: '', flavor: 'foundry', timeoutMs: K.FL.REQUEST_TIMEOUT_MS,
+      fetch: VEW.flBridge.fetchFor({ AiError: K.core.providers.AiError, timeoutMs: K.FL.REQUEST_TIMEOUT_MS + 15000 }),
+    });
+    return K.FL.createFoundryProvider({ model, inner, bridge: VEW.flBridge, onPhase: o && o.onPhase, signal: o && o.signal });
+  }
+
+  // Is everything in place to talk to Foundry Local? The extension (a current one), the user's approval of this site, and Foundry Local itself. Throws a FoundryError
+  // that says which of the three is missing (the settings dialog shows the same steps).
+  async function flReady() {
+    const d = await VEW.flBridge.detect();
+    if (!d.present) throw new K.FL.FoundryError('FL_NO_BRIDGE', 'The Foundry Local extension is not installed');
+    if (!d.compatible) throw new K.FL.FoundryError('FL_BRIDGE_OLD', 'The Foundry Local extension is too old', d.version);
+    if (!d.approved) throw new K.FL.FoundryError('FL_NOT_APPROVED', 'This site has not been allowed to use Foundry Local');
+    const f = await VEW.flBridge.discover({});
+    if (!f.ok) throw K.FL.bridgeFailure(f.code);
+    return f;
+  }
+
+  // a small picture to ask a model whether it can look at pictures (made here: nothing is shipped or fetched for it)
+  function probePicture() {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 64;
+    const x = c.getContext('2d');
+    x.fillStyle = '#2f6fed';
+    x.fillRect(0, 0, 64, 64);
+    x.fillStyle = '#ffd24a';
+    x.beginPath();
+    x.arc(32, 32, 18, 0, Math.PI * 2);
+    x.fill();
+    return c.toDataURL('image/jpeg', 0.85);
   }
 
   /* ------------------------------------------------------------------ the editor's state as the agent sees it */
@@ -338,6 +400,29 @@
     }
   }
 
+  // find_in_video for a Foundry Local model that takes pictures: the desktop app's pipeline (src/main/perception/) with the pictures cut by the browser's own decoder
+  // and the questions asked through the same provider as the chat. The pictures go to Foundry Local on this computer only (through the extension), so - as in the
+  // desktop app - there is nothing to confirm. o: { provider, session, userText, runSignal, runId, getExtractor() -> Promise<extractor> }
+  function makePerception(o) {
+    try {
+      return K.core.perception.createPerception({
+        pieces: o.session.originalMap(),
+        fileOf: (mediaId) => { if (!VEW.getMedia(mediaId)) throw new Error('media is gone'); return mediaId; },
+        ffmpegPath: 'browser',
+        procs: null,
+        extract: async (req) => (await o.getExtractor()).extract(req),
+        vlm: K.core.perceptionCloudVlm.createCloudVlm({ provider: o.provider, maxCalls: FL_VISION_MAX_CALLS }),
+        userText: o.userText,
+        signal: o.runSignal,
+        maxFrames: FL_VISION_FRAMES,
+        onProgress: (p) => VEW.emit('ai:step', Object.assign({ runId: o.runId, kind: 'search' }, p)),
+        log: () => {},
+      });
+    } catch (e) {
+      return null; // without eyes the assistant still edits by time
+    }
+  }
+
   async function webCu() {
     if (!cuMod) cuMod = await import('./web-cu.js');
     return cuMod;
@@ -352,6 +437,14 @@
     const r = req && typeof req === 'object' ? req : {};
     if (!K.C.AI_PROVIDERS.includes(r.provider)) return fail('BAD_PROVIDER');
     const provider = r.provider;
+    // Foundry Local has no address, key or video analysis here: the model (as Foundry Local names it) is all there is to save; the extension finds the server
+    if (provider === 'foundrylocal') {
+      const model = typeof r.model === 'string' ? r.model.trim() : '';
+      if (model && !K.FL.validId(model)) return fail('FL_BAD_MODEL');
+      settings = sanitize(Object.assign({}, settings, { provider, baseUrl: '', apiVersion: '', auth: 'key', model, shareNames: r.shareNames !== false, cu: { enabled: false, endpoint: '', analyzer: K.C.CU_DEFAULT_ANALYZER, location: 'geography' } }));
+      saveSettings();
+      return { ok: true, keyCleared: false, status: status() };
+    }
     const auth = r.auth === 'entra' && (provider === 'azure' || provider === 'foundry') ? 'entra' : 'key';
     // What portals show ("Target URI", project endpoint, a full API URL) is cleaned up first; deployment name and API version are picked up from it.
     const clean = K.core.endpoints.normalizeEndpoint(provider, typeof r.baseUrl === 'string' ? r.baseUrl : '', { model: typeof r.model === 'string' ? r.model : '', apiVersion: typeof r.apiVersion === 'string' ? r.apiVersion : '' });
@@ -364,7 +457,7 @@
       if (!v.ok) return fail(v.code);
       normalized = v.url;
     }
-    const next = { provider, auth, baseUrl: normalized, model: clean.model, apiVersion: clean.apiVersion, shareNames: r.shareNames !== false, cu: settings.cu };
+    const next = { provider, auth, baseUrl: normalized, model: clean.model, apiVersion: clean.apiVersion, shareNames: r.shareNames !== false, flVision: settings.flVision, cu: settings.cu };
     const url = K.core.net.validateBaseUrl(normalized || K.core.providers.DEFAULT_BASE_URLS[provider] || '');
     // Where the requests go decides who receives the text of the prompts and the key. Apart from the provider's own address and this computer the
     // destination is confirmed by the user (again whenever a key is entered for it). Nothing is saved or sent before; an unconfirmed address is not saved.
@@ -433,6 +526,12 @@
   async function aiTest() {
     await ensure();
     const st = status();
+    // Foundry Local: the same as "use this model" - load it, ask it a question, find out whether it sees pictures
+    if (st.provider === 'foundrylocal') {
+      if (!st.model) return fail('NOT_CONFIGURED');
+      const used = await flUse({ model: st.model, shareNames: st.shareNames });
+      return used.ok ? { ok: true, models: [], modelOk: true, vision: used.vision, modelId: used.modelId } : used;
+    }
     if (st.needs === 'key') return fail('NO_KEY');
     if (st.urlError) return fail(st.urlError);
     if (st.needs === 'mismatch') return fail('KEY_MISMATCH');
@@ -472,8 +571,9 @@
     const snapshot = buildSnapshot(r.snapshot);
     if (snapshot.error) return fail(snapshot.error);
     const controller = new AbortController();
+    const fl = st.provider === 'foundrylocal';
     // the time limit of the request; it stands still while a video is being analysed (see makeAnalysis)
-    const budget = { left: st.provider === 'local' ? LOCAL_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS, since: 0, timer: null };
+    const budget = { left: fl ? FL_RUN_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS), since: 0, timer: null };
     const arm = () => { budget.since = Date.now(); budget.timer = setTimeout(() => controller.abort(), Math.max(1000, budget.left)); };
     const disarm = () => { clearTimeout(budget.timer); budget.left -= Date.now() - budget.since; };
     arm();
@@ -484,7 +584,9 @@
     // the pictures come from the browser's own decoder; made when they are first needed
     const getExtractor = () => extractorLoad || (extractorLoad = import('./web-frames.js').then((frames) => { extractor = frames.createFrameExtractor((id) => VEW.getMedia(id)); return extractor; }));
     try {
-      const provider = providerFor(st);
+      // Foundry Local: say at once which of extension / approval / server is missing (instead of waiting for a request that nobody answers)
+      if (fl) await flReady();
+      const provider = providerFor(st, fl ? { onPhase: (phase) => VEW.emit('ai:step', { runId, kind: 'phase', phase }), signal: controller.signal } : undefined);
       const prompt = String(r.prompt || '');
       let analysisFactory;
       if (st.cu && st.cu.ready) {
@@ -508,6 +610,8 @@
         shareNames: st.shareNames,
         signal: controller.signal,
         onStep: (step) => VEW.emit('ai:step', Object.assign({ runId }, step)),
+        // a Foundry Local model that takes pictures looks at the video itself (find_in_video)
+        perceptionFactory: fl && st.vision ? (session) => makePerception({ provider, session, userText: prompt, runSignal: controller.signal, runId, getExtractor }) : undefined,
         analysisFactory,
         locatorFactory,
       });
@@ -592,6 +696,89 @@
     cuCache = { files: 0, bytes: 0 };
     return { ok: true, removed, status: status() };
   }
+
+  /* ------------------------------------------------------------------ api.fl: the setup of Foundry Local (the panel of the settings dialog) */
+
+  // What the panel shows: the extension (installed, current, approved for this site), Foundry Local (found, where), and its models. Quick: a hello to the extension
+  // and, once the site is approved, a look at the last known port, the list of models (kept for a short while) and which of them are loaded.
+  let flCatalog = { at: 0, ids: [] };
+  async function flState() {
+    await ensure();
+    const bridge = await VEW.flBridge.detect();
+    const out = { ok: true, bridge, found: false, base: '', port: 0, ids: [], recommended: [], loaded: [], minVersion: VEW.flBridge.MIN_VERSION };
+    if (!bridge.present || !bridge.compatible || !bridge.approved) return out;
+    const f = await VEW.flBridge.discover({});
+    if (!f.ok) { out.code = f.code; return out; }
+    out.found = true;
+    out.base = f.base;
+    out.port = f.port;
+    if (!flCatalog.ids.length || Date.now() - flCatalog.at > FL_CATALOG_MS) {
+      const m = await VEW.flBridge.call('models', { timeoutMs: 15000 });
+      if (m.ok && m.status === 200) flCatalog = { at: Date.now(), ids: K.FL.parseModelIds(m.text) };
+    }
+    // the recommended aliases that this Foundry Local knows, and the ids with those first
+    const sg = K.FL.suggestions(flCatalog.ids);
+    out.ids = sg.ids;
+    out.recommended = sg.recommended;
+    const l = await VEW.flBridge.call('loaded', { timeoutMs: 15000 });
+    if (l.ok && l.status === 200) out.loaded = K.FL.parseLoaded(l.text);
+    return out;
+  }
+
+  // the user presses "Allow": the extension opens its own window (the page cannot answer for the user); -> { ok, approved } | { ok: false, code }
+  async function flConnect() {
+    await ensure();
+    return VEW.flBridge.connect();
+  }
+
+  // look for Foundry Local again: at the last port and 5272; with scan (a click) through the whole range Foundry Local picks its port from
+  async function flFind(req) {
+    await ensure();
+    const r = req && typeof req === 'object' ? req : {};
+    flCatalog = { at: 0, ids: [] };
+    return VEW.flBridge.discover({ scan: r.scan === true });
+  }
+
+  // "Use this model": load it (an alias lets Foundry Local pick the variant that suits the computer), ask it a question, find out whether it sees pictures, and
+  // only then remember it. -> { ok, modelId, vision, visionKnown, status } | { ok: false, error }
+  async function flUse(req) {
+    await ensure();
+    const r = req && typeof req === 'object' ? req : {};
+    const model = typeof r.model === 'string' ? r.model.trim() : '';
+    if (!K.FL.validId(model)) return fail('FL_BAD_MODEL');
+    if (active) return fail('BUSY');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FL_TEST_TIMEOUT_MS);
+    active = { controller };
+    try {
+      await flReady();
+      const loaded = await K.FL.loadModel(VEW.flBridge, model, { signal: controller.signal });
+      const provider = flProvider(loaded.modelId, { signal: controller.signal });
+      await provider.chat({ system: 'Reply with the single word OK.', messages: [{ role: 'user', content: 'ping' }], tools: [], signal: controller.signal });
+      let vision = false;
+      let visionKnown = true;
+      try {
+        vision = await K.FL.probeVision(provider, probePicture(), controller.signal);
+      } catch (e) {
+        if (controller.signal.aborted) throw e;
+        visionKnown = false; // the model works; whether it sees pictures could not be found out (the assistant then works with time ranges only)
+      }
+      settings = sanitize(Object.assign({}, settings, { provider: 'foundrylocal', baseUrl: '', apiVersion: '', auth: 'key', model: loaded.modelId, shareNames: r.shareNames !== false, flVision: { model: loaded.modelId, ok: vision }, cu: { enabled: false, endpoint: '', analyzer: K.C.CU_DEFAULT_ANALYZER, location: 'geography' } }));
+      saveSettings();
+      flCatalog = { at: 0, ids: flCatalog.ids };
+      return { ok: true, modelId: loaded.modelId, vision, visionKnown, status: status() };
+    } catch (e) {
+      return { ok: false, error: K.core.agent.aiErrorInfo(e) };
+    } finally {
+      clearTimeout(timer);
+      active = null;
+    }
+  }
+
+  api.fl = {
+    state: flState, connect: flConnect, find: flFind, use: flUse,
+    links: { install: 'https://aka.ms/foundry-local-installer', docs: 'https://learn.microsoft.com/azure/foundry-local/get-started' },
+  };
 
   api.ai = {
     status: aiStatus, save: aiSave, clearKey: aiClearKey, test: aiTest, run: aiRun, cancel: aiCancel, discover: aiDiscover, cuTest: aiCuTest, cuClearCache: aiCuClearCache,

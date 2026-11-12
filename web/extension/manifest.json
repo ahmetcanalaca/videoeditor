@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "version": "1.0.0",
+  "description": "__MSG_extDesc__",
+  "default_locale": "en",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "__MSG_extName__",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://ahmetcanalaca.github.io/videoeditor/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ahmetcanalaca.github.io/videoeditor/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'self' http://127.0.0.1:*"
+  }
+}
