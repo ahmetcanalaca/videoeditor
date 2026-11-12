@@ -2,7 +2,7 @@
 // Sandboxed preload: exposes a small, explicit API to the renderer (contextIsolation stays on).
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
-const EVENTS = new Set(['media:thumb', 'media:waveform', 'media:proxy', 'export:progress', 'export:done', 'app:open-files', 'app:close-requested', 'ai:step', 'llm:progress']);
+const EVENTS = new Set(['media:thumb', 'media:waveform', 'media:proxy', 'export:progress', 'export:done', 'app:open-files', 'app:close-requested', 'ai:step', 'llm:progress', 'fl:progress']);
 
 const initialSettings = ipcRenderer.sendSync('settings:get-sync');
 
@@ -33,6 +33,17 @@ contextBridge.exposeInMainWorld('api', {
     warm: () => ipcRenderer.invoke('ai:warm'),
     cuTest: () => ipcRenderer.invoke('ai:cu-test'),
     cuClearCache: () => ipcRenderer.invoke('ai:cu-clear-cache'),
+  },
+  // Foundry Local (Microsoft's runtime for models on this computer): state, start, models, download / load / unload (progress: 'fl:progress'), official links
+  fl: {
+    status: () => ipcRenderer.invoke('fl:status'),
+    start: () => ipcRenderer.invoke('fl:start'),
+    models: (req) => ipcRenderer.invoke('fl:models', req),
+    download: (req) => ipcRenderer.invoke('fl:download', req),
+    load: (req) => ipcRenderer.invoke('fl:load', req),
+    unload: (req) => ipcRenderer.invoke('fl:unload', req),
+    cancel: () => ipcRenderer.invoke('fl:cancel'),
+    openLink: (req) => ipcRenderer.invoke('fl:open-link', req),
   },
   // the built-in local model: status, one-click install (download + check), remove, folder / graphics-or-CPU settings
   llm: {

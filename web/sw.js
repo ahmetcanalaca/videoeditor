@@ -181,11 +181,11 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return; // model downloads, local AI servers: not ours
+  if (url.origin !== self.location.origin) return; // model providers, local model servers: not ours
   const scope = new URL(self.registration.scope);
   if (!url.pathname.startsWith(scope.pathname)) return;
-  // the helper download and the manifest itself are never served from (or deleted out of) the cache; the worker script is the browser's own business
-  if (url.pathname.startsWith(scope.pathname + 'local-ai/') || url.pathname === scope.pathname + MANIFEST || url.pathname === scope.pathname + 'sw.js') return;
+  // the manifest itself is never served from (or deleted out of) the cache; the worker script is the browser's own business
+  if (url.pathname === scope.pathname + MANIFEST || url.pathname === scope.pathname + 'sw.js') return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     // the editor is the only page: the scope root and index.html (any other address is left to the network and its 404)

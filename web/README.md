@@ -6,12 +6,12 @@ The same compact editor as the Windows app, as a **static website**: no server c
 Your videos are opened with the browser's own file picker, decoded and encoded **inside the page** (WebCodecs, through the
 [Mediabunny](https://github.com/Vanilagy/mediabunny) library) and the result is written with the browser's save dialog.
 **Nothing is uploaded anywhere** unless you switch on the optional Foundry video analysis (then, each time you confirm it, a reduced copy goes to *your own* Azure resource). After the first visit the site also works **offline** (service worker).
-The optional **AI assistant** is the same as in the Windows app: it runs a model on *your* computer (the *Local AI helper*) or talks to the provider *you* choose with *your* key.
+The optional **AI assistant** is the same as in the Windows app: it talks to the provider *you* choose with *your* key, or to a model server on *your* computer that allows browsers (Ollama, LM Studio). **Foundry Local** is used from the Windows app: a web page cannot reach it (explained below).
 
 Windows uygulamasıyla aynı kompakt editör, **statik bir web sitesi** olarak: sunucu kodu, kurulum, hesap yok; **video düzenlemek için API anahtarı gerekmez**.
 Videolarınız tarayıcının kendi dosya seçicisiyle açılır, **sayfanın içinde** çözülür/kodlanır (WebCodecs, Mediabunny kütüphanesi üzerinden)
 ve sonuç tarayıcının kaydetme penceresiyle yazılır. **İsteğe bağlı Foundry video analizini açmadıkça hiçbir şey bir yere yüklenmez** (açarsanız her seferinde onayınızla küçültülmüş bir kopya *kendi* Azure kaynağınıza gider). İlk ziyaretten sonra site **internetsiz** de çalışır.
-İsteğe bağlı **AI asistanı** Windows uygulamasındakiyle aynıdır: *sizin* bilgisayarınızda çalışan bir modelle (*Yerel AI yardımcısı*) veya *sizin* seçtiğiniz sağlayıcıyla, *sizin* anahtarınızla çalışır.
+İsteğe bağlı **AI asistanı** Windows uygulamasındakiyle aynıdır: *sizin* seçtiğiniz sağlayıcıyla (*sizin* anahtarınızla) ya da *sizin* bilgisayarınızdaki, tarayıcılara izin veren bir model sunucusuyla (Ollama, LM Studio) çalışır. **Foundry Local** Windows uygulamasından kullanılır: bir web sayfası ona bağlanamaz (aşağıda açıklanıyor).
 
 ## Use it / Kullanım
 
@@ -30,46 +30,39 @@ ve sonuç tarayıcının kaydetme penceresiyle yazılır. **İsteğe bağlı Fou
 | Works offline | ✔ after the first visit | ✔ |
 | Installation / administrator rights | none | per-user installer or portable folder |
 | Formats it can open | what the browser decodes: MP4, MOV, M4V, MKV, WebM, MPEG-TS with H.264 / VP8 / VP9 / AV1 (HEVC only where the browser has hardware support) | everything FFmpeg reads (AVI, WMV, FLV, MPG …, with a preview proxy) |
-| AI assistant (optional) | ✔ Local AI helper (same model as the app), cloud providers with your key, other local servers, Foundry video analysis | ✔ built-in local model, cloud providers, Foundry video analysis |
+| AI assistant (optional) | ✔ cloud providers with your key, a model server on this computer that allows browsers (Ollama, LM Studio), Foundry video analysis | ✔ built-in local model, **Foundry Local**, cloud providers, other local servers, Foundry video analysis |
 | Browsers | Chrome / Edge (tested, full). Other browsers are not tested: without the save picker the export is built in memory (limit ≈1.2 GB) and downloaded | – |
 
 ### AI assistant (optional) / AI asistanı (isteğe bağlı)
 
 <p>
   <img src="../docs/screenshots/web-07-ai-assistant-tr-dark.png" alt="The assistant cuts the first 3 seconds (Turkish, dark)" width="49%">
-  <img src="../docs/screenshots/web-06-ai-settings-local-tr-dark.png" alt="Settings: the Local AI helper, connected (Turkish, dark)" width="49%">
+  <img src="../docs/screenshots/web-06-ai-settings-foundrylocal-tr-dark.png" alt="Settings: Foundry Local is used from the Windows app (Turkish, dark)" width="49%">
 </p>
 <p>
   <img src="../docs/screenshots/web-08-ai-settings-foundry-cu-en-light.png" alt="Settings: Microsoft Foundry with video analysis (English, light)" width="49%">
 </p>
 
 Type what you want ("cut the first 3 seconds", "speed up the quiet parts", "zoom in on the dog") and the assistant edits the timeline; everything it did is **one undo step**.
-It is the desktop app's assistant, unchanged (`scripts/sync-desktop.js` bundles the desktop code instead of copying it by hand). With a model that accepts images it can also
-**look at the video** ("find the dog, zoom in while it is on screen"). Open it with the **AI** button; the settings dialog offers:
+It is the desktop app's assistant, unchanged (`scripts/sync-desktop.js` bundles the desktop code instead of copying it by hand). Open it with the **AI** button; the settings dialog offers:
 
 | Provider | What runs where | Needs |
 |---|---|---|
-| **Local AI** (recommended) | The same model as the Windows app (Qwen3.5-4B with image input, llama.cpp) runs **on your computer** and listens on `127.0.0.1` only. | Download the small helper (zip) from the settings dialog, extract it, double-click `Start-Local-AI.cmd`. The first run downloads the engine (≈40 MB, github.com) and the model (≈3.4 GB, huggingface.co), checks every file against a pinned SHA-256, then opens this page with a pairing link; press *Connect*. Windows, ≈6 GB free memory. No account, no key to buy. |
 | OpenAI-compatible, Azure OpenAI, **Microsoft Foundry**, Anthropic, Gemini | The page calls the provider directly from your browser. Only your command and a **text** summary of the timeline are sent. | Your own API key (kept for this tab only and never written to a project; the browser may keep a copy of an open tab's session data in its profile). Entra ID: paste a short-lived access token. |
-| Other local server (Ollama, LM Studio, Foundry Local, llama.cpp …) | On this computer. | The server must allow this site (CORS). |
+| **Model server on this computer** (Ollama, LM Studio, llama.cpp …) | On this computer; nothing leaves it. A model without tool calling still works: the tools are written into the prompt. | The server must allow this site (CORS), e.g. `OLLAMA_ORIGINS` for Ollama, "Enable CORS" in LM Studio. |
+| **Foundry Local** (Microsoft) | **Windows app only.** A web page cannot connect to it: its server (checked with version 0.14) sends no CORS headers, which browsers require, and it has no setting for them. The Windows app is not a browser: it finds Foundry Local itself, lets you pick, download and load a model (e.g. `qwen3.5-4b`) and can have it look at the picture of the video. The settings dialog shows this explanation with the official links. | Install Foundry Local ([official installer](https://aka.ms/foundry-local-installer) or `winget install Microsoft.FoundryLocal`) and use the [Windows app](https://github.com/ahmetcanalaca/videoeditor/releases/latest). No key, no account. |
 | **Foundry + Content Understanding** | Optional *video analysis*: with your confirmation each time, a small copy of your video is uploaded to **your** Azure resource; the result (scene descriptions, speech) comes back as text. For a zoom that has to aim at an object, a few small pictures (≤ 640 px, ≤ 120 KB each) can also be shown to your chat model, after a separate confirmation every time (the analysis says *when*, the pictures say *where*; this app does not keep them, the model service's own data policy applies). | A Foundry / Azure AI resource with Content Understanding; a chat model that accepts pictures (e.g. `gpt-4.1`) for the position. |
 
-Türkçe özet: *Yerel AI* modeli (masaüstündekiyle aynı) **sizin bilgisayarınıza** iner ve orada çalışır; bu site ona 127.0.0.1 üzerinden bağlanır. Yardımcı küçük bir zip'tir
-(`Start-Local-AI.cmd`, okunabilir PowerShell betiği); model ve motor ilk çalıştırmada indirilir ve SHA-256 ile doğrulanır. Bulut sağlayıcıları kendi anahtarınızla çalışır.
+Türkçe özet: bulut sağlayıcıları kendi anahtarınızla çalışır; bu bilgisayardaki bir model sunucusu (Ollama, LM Studio) tarayıcılara izin verirse (CORS) kullanılabilir. **Foundry Local** web sürümünden kullanılamaz (sunucusu tarayıcıların istediği CORS başlıklarını göndermiyor); Windows uygulaması ona doğrudan bağlanır: Foundry Local'i resmî bağlantıdan kurun, uygulamada AI ayarlarında *Foundry Local*'ı seçin.
 
 How it is kept safe:
 
 * **One network path.** The page itself can only talk to its own origin (`connect-src 'self'`). Every request of the assistant goes through a small worker (`js/web/ai/net-worker.js`) that has its own, stricter policy:
   `127.0.0.1` / `localhost`, the three well-known provider origins, and the https origins **you confirmed** in the settings (asked whenever you enter a key for such an address, saying what is sent there). No redirects, no cookies, no referrer.
 * **Keys.** A browser has no secure key store, so a cloud key lives in `sessionStorage` (this tab only, meant to be gone when the tab closes; a Chromium-based browser may still keep a copy of an open tab's session data in its profile folder for crash recovery, so on a shared computer use a key you can revoke), is bound to the origin it was typed for, is only ever sent to that origin, and is never part of a project file.
-* **The helper.** `127.0.0.1` only, a random key that is made on your computer **at every start** (handed to the page in the part of the address after `#`, which is never sent to a server; worthless once the helper's window is closed), SHA-256-pinned downloads, no administrator rights, nothing else contacted. It is a readable script: [`local-ai/`](local-ai/). It is not signed: you trust this repository and GitHub; the workflow that publishes the site attests the exact zip (signed build provenance), so `gh attestation verify` on the file you downloaded tells you where it was built, see [SECURITY.md](../SECURITY.md).
 * **Hosting.** Browsers isolate by origin, not by path: this site shares `*.github.io` with every other Pages site of the account. The service worker therefore verifies every cached file against the build manifest (whose hash is baked into the worker script), and you should not host untrusted content on other repositories of the same account (or give this site its own domain).
-* **Pairing.** The page asks before it connects to a helper ("Connect to the Local AI on this computer, port …?") and removes the key from the address bar at once.
 
-Measured with the real thing (`node tests/ai-real.test.js`: the helper starts the real Qwen3.5-4B, the page pairs with it, headless Chrome drives the UI; one laptop with an integrated AMD GPU): 5 of 5 typed commands (English and Turkish: cut the first 3 seconds, speed up ×2, split + half speed, delete the last 2 seconds, zoom 1.5×) edited the timeline exactly as asked and were undone by one Ctrl+Z; "zoom in on the dog" on a 60 s film made of real COCO photographs found 5 of 5 appearances (time-IoU 0.90, edges within ≈0.3 s, the zoom aimed at the dog) in ≈2.5–2.8 minutes, in both languages. Other films and other hardware will differ; a 4B model makes mistakes, which is why every change is one undo step.
-
-Limits of the AI part: Chrome/Edge ask once for permission to "access devices on your local network" (Local Network Access, Chrome/Edge 142+) the first time the page talks to `127.0.0.1` (choose *Allow*; if you chose *Block*, the settings panel says where to change it: site settings > Local network access / Loopback network; on a company computer IT can pre-allow it with the policy `LoopbackNetworkAllowedForUrls` for this site; `tests/lna.test.js` runs the real browser check). A cloud provider has to allow browser calls (OpenAI, Anthropic, Gemini and Azure do);
-the helper is a Windows script (on other systems start `llama-server` yourself, see `local-ai/README.txt`); the Foundry / Content Understanding path is tested against a mock and the services' CORS answers, not against a live resource in this release.
+Limits of the AI part: Chrome/Edge ask once for permission to "access devices on your local network" (Local Network Access, Chrome/Edge 142+) the first time the page talks to a model server on `127.0.0.1` (choose *Allow*; if you chose *Block*, the error message says where to change it: site settings > Local network access / Loopback network; on a company computer IT can pre-allow it with the policy `LoopbackNetworkAllowedForUrls` for this site; `tests/lna.test.js` runs the real browser check). A cloud provider has to allow browser calls (OpenAI, Anthropic, Gemini and Azure do); the Foundry / Content Understanding path is tested against a mock and the services' CORS answers, not against a live resource in this release.
 
 ### Known limits
 
@@ -89,21 +82,18 @@ the helper is a Windows script (on other systems start `llama-server` yourself, 
 
 ```text
 cd web
-node scripts/serve.js                 # http://127.0.0.1:<port>/ (the site as GitHub Pages serves it; also packs the Local AI helper download on the fly)
-node scripts/build.js                 # builds _site/ (what is published: service worker with the build id, precache list, local-ai/ download, .nojekyll, 404.html)
+node scripts/serve.js                 # http://127.0.0.1:<port>/ (the site as GitHub Pages serves it)
+node scripts/build.js                 # builds _site/ (what is published: service worker with the build id, precache list, .nojekyll, 404.html)
 node scripts/sync-desktop.js          # regenerates what is taken from the desktop sources (add --check to only verify)
 node scripts/vendor.js verify         # vendored libraries == vendor-lock.json
 node tests/audio-dsp.test.js          # unit tests (no browser)
-node tests/ai-core.test.js            # the desktop assistant code running in the web bundle (agent loop, providers, endpoints, find_in_video, crypto shims)
-node tests/local-ai.test.js           # the Local AI helper with Windows PowerShell: downloads (mock server), pins, zip, and the REAL model when the desktop app's model is on the machine (VE_ONLY=static|download|real, VE_SKIP_REAL=1)
+node tests/ai-core.test.js            # the desktop assistant code running in the web bundle (agent loop, providers incl. the tools-in-the-prompt fallback, endpoints, find_in_video, crypto shims)
 node tests/smoke.test.js              # real Chrome/Edge (set VE_BROWSER to its path if it is not found)
 node tests/ui.test.js                 # the whole UI: languages, themes, import, editing, shortcuts, export dialog, projects
-node tests/ai.test.js                 # the assistant in the browser: pairing, cutting by command, cancel, wrong key, find_in_video, cloud providers, trust dialogs
+node tests/ai.test.js                 # the assistant in the browser: a model server on this computer, cutting by command, cancel, wrong key, a model without tool calling, cloud providers, trust dialogs, the Foundry Local explanation
 node tests/cu.test.js                 # Foundry + Content Understanding video analysis against the desktop app's mock of the service
 node tests/locate.test.js             # the zoom aims at WHERE the object is: pictures after a question every time, a stand-in vision model that decodes every JPEG (tests/locate-world.js)
-node tests/lna.test.js                # Local Network Access as Chrome/Edge enforce it (page counts as public, helper on loopback): refusal, grant, other tab
-node tests/ai-real.test.js            # MANUAL (npm run test:real): the real helper + the real Qwen3.5-4B + the page; needs the desktop app's model, ≈10 minutes
-node tests/pwa.test.js                # service worker: offline, headers, network-worker policy, integrity of the cache, update flow
+node tests/lna.test.js                # Local Network Access as Chrome/Edge enforce it (page counts as public, model server on loopback): refusal, grant, settings written by another page                # service worker: offline, headers, network-worker policy, integrity of the cache, update flow
 node tests/export.test.js             # 27 export cases checked with ffprobe/ffmpeg (set VE_FFMPEG / VE_FFPROBE, or keep the desktop vendor\ffmpeg\bin next to the repo)
 ```
 
@@ -113,5 +103,5 @@ browser APIs. The editing model and the assistant's brain (`js/shared/`, `js/web
 ### Publish your own copy
 
 Fork the repository → *Settings → Pages → Source: GitHub Actions* → push to `main`. The workflow `.github/workflows/pages.yml`
-verifies the vendored libraries, builds `web/_site`, attests the helper zip and deploys it (the Local AI helper tests run next to it on Windows, informational). A project site lives under `/<repository name>/`; all URLs in the site are relative.
+verifies the vendored libraries, builds `web/_site` and deploys it. A project site lives under `/<repository name>/`; all URLs in the site are relative.
 The browser tests above are not run on every push (a hosted runner has no ffmpeg and no reliable package mirror); `.github/workflows/browser-tests.yml` starts them by hand, and `npm test` runs them on your own computer.

@@ -223,6 +223,22 @@ test('discover: finds OpenAI-compatible servers and Foundry Local, ignores every
   }
 });
 
+test('discover: Foundry Local 0.14 (/status, its whole catalogue at /v1/models) is recognised and left to its own settings option - it is not offered as a plain local server', async () => {
+  const modern = await serve((req, res) => {
+    if (req.url === '/status') json(res, 200, { artifact_qualified_model_management: true, endpoints: ['http://127.0.0.1:58943'], modelCachePath: 'C:\\m', pid: 5 });
+    else if (req.url === '/v1/models') json(res, 200, { data: Array.from({ length: 101 }, (_, i) => ({ id: 'catalog-model-' + i + ':1' })) });
+    else json(res, 404, {});
+  });
+  const other = await serve((req, res) => json(res, req.url === '/v1/models' ? 200 : 404, { data: [{ id: 'llama3' }] }));
+  try {
+    const found = await discoverLocalServers({ ports: [modern.port, other.port], timeoutMs: 1500 });
+    same(found.map((f) => f.models), [['llama3']], 'only the other server is listed');
+    const { probePort } = require('../src/main/ai/discover');
+    const p = await probePort(modern.port, 1500);
+    eq(p.foundry, true); eq(p.modern, true); same(p.models, []);
+  } finally { await Promise.all([modern, other].map((s) => s.close())); }
+});
+
 test('discover: llama.cpp reports the model file as its id - only the file name is shown', async () => {
   const s = await serve((req, res) => json(res, req.url === '/v1/models' ? 200 : 404, { data: [{ id: 'C:\\Users\\me\\models\\qwen2.5-3b-instruct-q4_k_m.gguf' }, { id: '/home/u/m/phi-4-mini.gguf' }, { id: 'plain-name:7b' }] }));
   try {
@@ -259,7 +275,7 @@ test('discover: ports are read from the Foundry CLI status text (loopback only, 
 /* ------------------------------------------------------------------ settings schema */
 
 test('settings: the new providers are known; "auth" is key or entra, entra only for Azure OpenAI / Foundry; no secrets can be smuggled in', () => {
-  same(AI_PROVIDERS, ['openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local', 'builtin']);
+  same(AI_PROVIDERS, ['openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local', 'builtin', 'foundrylocal']);
   same(AI_AUTH, ['key', 'entra']);
   eq(sanitize({}).ai.auth, 'key');
   eq(sanitize({ ai: { provider: 'foundry', auth: 'entra' } }).ai.auth, 'entra');
@@ -269,6 +285,8 @@ test('settings: the new providers are known; "auth" is key or entra, entra only 
   eq(sanitize({ ai: { provider: 'foundry', auth: 'password' } }).ai.auth, 'key');
   eq(sanitize({ ai: { provider: 'local' } }).ai.provider, 'local');
   eq(sanitize({ ai: { provider: 'builtin', auth: 'entra' } }).ai.auth, 'key');
+  eq(sanitize({ ai: { provider: 'foundrylocal', auth: 'entra', model: 'qwen3.5-4b-generic-cpu:3' } }).ai.auth, 'key');
+  eq(sanitize({ ai: { provider: 'foundrylocal', model: 'qwen3.5-4b-generic-cpu:3' } }).ai.provider, 'foundrylocal');
   eq(sanitize({ ai: { provider: 'nonsense' } }).ai.provider, 'builtin', 'an unknown provider falls back to the default (the built-in model)');
   const s = sanitize({ ai: { provider: 'foundry', apiKey: 'TEST_KEY_not_a_real_secret_0123456789', token: 'x', auth: 'entra' } });
   ok(!JSON.stringify(s).includes('TEST_KEY_not_a_real_secret'), 'a key in settings.json is dropped');

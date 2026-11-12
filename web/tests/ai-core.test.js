@@ -56,7 +56,9 @@ const url = (rel) => pathToFileURL(path.join(WEB, rel)).href;
     check('bundle: shared model and agent-ops are loaded once and agent-ops uses that model', typeof core.model.createSegment === 'function' && typeof core.ops.Session === 'function', null);
     const settings = require(path.join(WEB, '..', 'src', 'main', 'settings'));
     const web = (await import(url('js/web/ai/constants.js'))).constants;
-    check('constants: providers, Content Understanding locations / analyzer rule equal the desktop settings', JSON.stringify(web.AI_PROVIDERS) === JSON.stringify(settings.AI_PROVIDERS) && JSON.stringify(web.CU_LOCATIONS) === JSON.stringify(settings.CU_LOCATIONS) && web.CU_ANALYZER_RE.source === settings.CU_ANALYZER_RE.source && web.CU_DEFAULT_ANALYZER === settings.CU_DEFAULT_ANALYZER, null);
+    // (the desktop's "builtin" and "foundrylocal" start or reach a model on this computer: a page can do neither, see js/web/ai/constants.js)
+    const desktopOnly = ['builtin', 'foundrylocal'];
+    check('constants: providers, Content Understanding locations / analyzer rule equal the desktop settings', JSON.stringify(web.AI_PROVIDERS) === JSON.stringify(settings.AI_PROVIDERS.filter((p) => !desktopOnly.includes(p))) && web.AI_PROVIDERS.every((p) => !desktopOnly.includes(p)) && web.AI_PROVIDERS.includes(web.DEFAULT_PROVIDER) && JSON.stringify(web.CU_LOCATIONS) === JSON.stringify(settings.CU_LOCATIONS) && web.CU_ANALYZER_RE.source === settings.CU_ANALYZER_RE.source && web.CU_DEFAULT_ANALYZER === settings.CU_DEFAULT_ANALYZER, null);
   }
 
   // 4. the agent loop of the desktop, through the bundle, with a scripted provider
@@ -91,13 +93,25 @@ const url = (rel) => pathToFileURL(path.join(WEB, rel)).href;
       const body = { id: 'x', choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'set_speed', arguments: '{"speed":2,"first_seconds":5}' } }] } }], usage: { prompt_tokens: 11, completion_tokens: 4 } };
       return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
     };
-    const p = core.providers.createProvider({ kind: 'local', baseUrl: 'http://127.0.0.1:8473/v1', model: 'qwen', apiKey: 'TEST_KEY_not_a_real_secret_unit', fetch: fakeFetch });
+    const p = core.providers.createProvider({ kind: 'local', baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen', apiKey: 'TEST_KEY_not_a_real_secret_unit', fetch: fakeFetch });
     const res = await p.chat({ system: 'sys', messages: [{ role: 'user', content: 'faster' }], tools: core.agent.compactTools(core.ops.getToolDefs({})) });
     check('provider (local/OpenAI protocol): the tool call is parsed', res.toolCalls.length === 1 && res.toolCalls[0].name === 'set_speed' && res.toolCalls[0].args.speed === 2 && res.usage.input === 11, res);
-    check('provider (local): the key goes in the Authorization header to the configured URL only', sent.length === 1 && sent[0].u === 'http://127.0.0.1:8473/v1/chat/completions' && /Bearer TEST_KEY_not_a_real_secret_unit/.test(JSON.stringify(sent[0].init.headers)), sent[0] && sent[0].u);
-    check('endpoint policy: https only, http only for this computer, no credentials', core.net.validateBaseUrl('http://example.com/v1').code === 'URL_SCHEME' && core.net.validateBaseUrl('http://127.0.0.1:8473/v1').ok && core.net.validateBaseUrl('https://u:p@x.com').code === 'URL_CREDENTIALS' && core.net.validateBaseUrl('http://[::1]:1/v1').ok, null);
+    check('provider (local): the key goes in the Authorization header to the configured URL only', sent.length === 1 && sent[0].u === 'http://127.0.0.1:11434/v1/chat/completions' && /Bearer TEST_KEY_not_a_real_secret_unit/.test(JSON.stringify(sent[0].init.headers)), sent[0] && sent[0].u);
+    check('endpoint policy: https only, http only for this computer, no credentials', core.net.validateBaseUrl('http://example.com/v1').code === 'URL_SCHEME' && core.net.validateBaseUrl('http://127.0.0.1:11434/v1').ok && core.net.validateBaseUrl('https://u:p@x.com').code === 'URL_CREDENTIALS' && core.net.validateBaseUrl('http://[::1]:1/v1').ok, null);
     const n = core.endpoints.normalizeEndpoint('azure', 'https://res.openai.azure.com/openai/deployments/gpt4o/chat/completions?api-version=2024-10-21', {});
     check('endpoint clean-up: an Azure "Target URI" gives resource, deployment and API version', n.url === 'https://res.openai.azure.com' && n.model === 'gpt4o' && n.apiVersion === '2024-10-21', n);
+        // a model that cannot call tools: the request with tools is answered 400, then the tools are written into the prompt (desktop code, bundled)
+        const promptedSent = [];
+        const toollessFetch = async (u, init) => {
+          const body = JSON.parse(init.body);
+          promptedSent.push(body);
+          if (body.tools) return new Response(JSON.stringify({ error: { message: 'registry.example/library/tiny does not support tools' } }), { status: 400, headers: { 'content-type': 'application/json' } });
+          const text = JSON.stringify({ tool_calls: [{ name: 'set_speed', arguments: { speed: 2, first_seconds: 5 } }] });
+          return new Response(JSON.stringify({ id: 'y', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: text } }], usage: { prompt_tokens: 9, completion_tokens: 3 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        };
+        const p2 = core.providers.createProvider({ kind: 'local', baseUrl: 'http://127.0.0.1:11434/v1', model: 'tiny', fetch: toollessFetch });
+        const res2 = await p2.chat({ system: 'sys', messages: [{ role: 'user', content: 'faster' }], tools: core.agent.compactTools(core.ops.getToolDefs({})) });
+        check('provider (local): a model without tool calling gets the tools in the prompt and its JSON answer is read as a tool call', promptedSent.length === 2 && !!promptedSent[0].tools && !promptedSent[1].tools && /HOW TO CALL TOOLS/.test(promptedSent[1].messages[0].content) && res2.toolCalls.length === 1 && res2.toolCalls[0].name === 'set_speed' && res2.toolCalls[0].args.speed === 2, { n: promptedSent.length, res2 });
   }
 
   // 6. find_in_video: the desktop pipeline (query clean-up, coarse scan, bisection, boxes) with the web's frame hook and a scripted "model"

@@ -7,6 +7,10 @@
 //     llama-server -m qwen2.5-3b-instruct-q4_k_m.gguf --jinja -c 8192 --port 18080     (llama.cpp; portable, no installation)
 //     ollama run qwen2.5:3b   (then use http://127.0.0.1:11434/v1)
 //     LM Studio / Foundry Local: start the local server and note its address
+//   Foundry Local (the address is in %USERPROFILE%\.foundry\daemon.json, the model must be loaded: foundry model load qwen3.5-4b):
+//     set VE_LOCAL_URL=http://127.0.0.1:<port>/v1
+//     set VE_LOCAL_MODEL=qwen3.5-4b-generic-gpu:4      (the full id with the version, as foundry cache list -o json shows it)
+//     set VE_LOCAL_FLAVOR=foundry                       (thinking off; the tools go in the prompt when the server refuses them)
 //   Then:
 //     set VE_LOCAL_URL=http://127.0.0.1:18080/v1
 //     set VE_LOCAL_MODEL=qwen2.5-3b            (llama.cpp ignores the name; Ollama / LM Studio need the real one)
@@ -47,7 +51,7 @@ const CASES = [
 
 (async () => {
   console.log(`Local model trial  url=${URL_BASE}  model=${MODEL}  prompt=${process.env.VE_LOCAL_COMPACT === '0' ? 'full (cloud prompt)' : 'compact (local prompt)'}\n`);
-  const real = createProvider({ kind: 'local', baseUrl: URL_BASE, model: MODEL, apiKey: '', fetch: globalThis.fetch, timeoutMs: 300000 });
+  const real = createProvider({ kind: 'local', baseUrl: URL_BASE, model: MODEL, apiKey: '', fetch: globalThis.fetch, timeoutMs: 300000, flavor: process.env.VE_LOCAL_FLAVOR || undefined, promptedTools: process.env.VE_LOCAL_PROMPTED || undefined });
   // VE_LOCAL_DEBUG=1 prints what the model asked for
   const provider = process.env.VE_LOCAL_DEBUG === '1'
     ? { kind: real.kind, async chat(req) { const r = await real.chat(req); console.log('   model ->', JSON.stringify(r.toolCalls.map((c) => ({ name: c.name, args: c.args }))), r.text ? 'text: ' + JSON.stringify(r.text.slice(0, 160)) : ''); return r; } }

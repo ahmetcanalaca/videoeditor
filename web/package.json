@@ -1,18 +1,17 @@
 {
   "name": "video-editor-web",
   "productName": "Video Editör (web)",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "private": true,
   "homepage": "https://ahmetcanalaca.github.io/videoeditor/",
   "repository": { "type": "git", "url": "https://github.com/ahmetcanalaca/videoeditor.git" },
-  "description": "Static web edition of Video Editör: the same editor, running entirely in the browser (WebCodecs + Mediabunny). The optional AI assistant uses a cloud provider with the user's own key, or the Local AI helper that runs the model on the user's own computer.",
+  "description": "Static web edition of Video Editör: the same editor, running entirely in the browser (WebCodecs + Mediabunny). The optional AI assistant uses a cloud provider with the user's own key, or a model server on the user's own computer that allows browsers (Ollama, LM Studio).",
   "scripts": {
     "serve": "node scripts/serve.js",
     "build": "node scripts/build.js",
     "sync": "node scripts/sync-desktop.js",
     "vendor:verify": "node scripts/vendor.js verify",
-    "test": "node tests/audio-dsp.test.js && node tests/ai-core.test.js && node tests/local-ai.test.js && node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/locate.test.js && node tests/lna.test.js && node tests/export.test.js && node tests/pwa.test.js",
-    "test:real": "node tests/ai-real.test.js"
+    "test": "node tests/audio-dsp.test.js && node tests/ai-core.test.js && node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/locate.test.js && node tests/lna.test.js && node tests/export.test.js && node tests/pwa.test.js"
   },
   "license": "MIT"
 }

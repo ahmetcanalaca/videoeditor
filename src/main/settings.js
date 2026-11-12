@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { classify } = require('./media-guard');
 
-const AI_PROVIDERS = ['openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local', 'builtin'];
+const AI_PROVIDERS = ['openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local', 'builtin', 'foundrylocal'];
 // How the user signs in: an API key, or (Azure OpenAI / Microsoft Foundry only) Microsoft Entra ID through the Azure CLI.
 const AI_AUTH = ['key', 'entra'];
 // Built-in local model: where the graphics chip or the CPU runs it.

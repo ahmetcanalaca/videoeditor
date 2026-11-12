@@ -1,9 +1,9 @@
 (function () {
   'use strict';
-  // The assistant of the web edition: window.api.ai / window.api.llm, the browser side of what the desktop app's main process does
-  // (src/main/ai/ipc.js). The agent loop, the provider adapters, the video-analysis client and the "look at the video" pipeline ARE the desktop
-  // code (bundled unchanged, see js/web/ai/desktop-core.js); this file is the glue: settings, the key, which addresses may be contacted, running a
-  // request, and the Local AI helper that runs the built-in model on the user's own computer.
+  // The assistant of the web edition: window.api.ai, the browser side of what the desktop app's main process does (src/main/ai/ipc.js). The agent loop, the
+  // provider adapters and the video-analysis client ARE the desktop code (bundled unchanged, see js/web/ai/desktop-core.js); this file is the glue: settings,
+  // the key, which addresses may be contacted, and running a request. (Foundry Local, which the desktop app runs models with, cannot be reached from a page:
+  // its server sends no CORS headers. The settings dialog says so and points to the desktop app.)
   //
   // Where things go: every request leaves through the network worker (js/web/ai/net.js), which can reach only the providers' own addresses, this
   // computer, and the https addresses the user allowed here. Nothing is sent before the user has chosen a provider.
@@ -12,14 +12,10 @@
 
   const LS_SETTINGS = 've.web.ai.v1'; // what the assistant is set up to use (never a secret)
   const SS_KEY = 've.web.ai.key.v1'; // the key of a cloud provider: this browser tab's session only
-  const LS_HELPER = 've.web.ai.helper.v1'; // pairing with the Local AI helper: { port, key, vision } (the key only opens a server on this computer)
   const TEST_TIMEOUT_MS = 30000;
   const RUN_TIMEOUT_MS = 4 * 60 * 1000;
   const LOCAL_TEST_TIMEOUT_MS = 2 * 60 * 1000;
   const LOCAL_RUN_TIMEOUT_MS = 10 * 60 * 1000;
-  const BUILTIN_TEST_TIMEOUT_MS = 4 * 60 * 1000;
-  const BUILTIN_RUN_TIMEOUT_MS = 45 * 60 * 1000;
-  const BUILTIN_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
   const CU_ANALYSIS_TIMEOUT_MS = 60 * 60 * 1000;
   const CU_TEST_TIMEOUT_MS = 45 * 1000;
   // the chat models whose adapters pass a picture on (the others - Anthropic, Gemini - read text only, so they are not offered locate_in_video)
@@ -31,8 +27,6 @@
   let K = null; // { core, C } once the bundle is loaded
   let settings = null;
   let vault = { key: '', origin: '' };
-  let helper = { port: 0, key: '', vision: true, model: '' };
-  let helperState = { phase: 'unknown', error: '' }; // what the last connection test found: unknown | ready | unreachable | unauthorized
   let cuCache = { files: 0, bytes: 0 };
   let active = null;
   let discovering = false;
@@ -62,7 +56,7 @@
     const o = raw && typeof raw === 'object' ? raw : {};
     const cu = o.cu && typeof o.cu === 'object' ? o.cu : {};
     return {
-      provider: K.C.AI_PROVIDERS.includes(o.provider) ? o.provider : 'builtin',
+      provider: K.C.AI_PROVIDERS.includes(o.provider) ? o.provider : K.C.DEFAULT_PROVIDER,
       // 'entra' = an access token (Microsoft Entra ID) pasted instead of an API key; it travels as "Authorization: Bearer ..."
       auth: o.auth === 'entra' ? 'entra' : 'key',
       baseUrl: str(o.baseUrl, 300),
@@ -88,27 +82,15 @@
     } catch (e) { /* the key then lives in memory only */ }
   }
 
-  function saveHelper() {
-    try {
-      if (helper.port && helper.key) localStorage.setItem(LS_HELPER, JSON.stringify({ port: helper.port, key: helper.key, vision: helper.vision !== false, model: helper.model })); else localStorage.removeItem(LS_HELPER);
-    } catch (e) { /* the pairing is for this session only */ }
-  }
-
-  // The pairing with the Local AI helper as stored by this or another tab of the browser (nothing valid = not paired)
-  function readHelper() {
-    const h = readJson(localStorage, LS_HELPER);
-    if (h && Number.isInteger(h.port) && h.port >= 1024 && h.port <= 65535 && typeof h.key === 'string' && validateKey(h.key).ok) return { port: h.port, key: h.key, vision: h.vision !== false, model: str(h.model, 120) };
-    return { port: 0, key: '', vision: true, model: '' };
-  }
-
   async function ensure() {
     if (K) return K;
     const [core, constants] = await Promise.all([import('./desktop-core.js'), import('./constants.js')]);
     K = { core, C: constants.constants };
+    // the pairing key of the Local AI helper of earlier versions (a secret for a program that is gone): not kept any longer
+    try { localStorage.removeItem('ve.web.ai.helper.v1'); } catch (e) { /* storage not available */ }
     settings = sanitize(readJson(localStorage, LS_SETTINGS));
     const k = readJson(sessionStorage, SS_KEY);
     if (k && typeof k.k === 'string' && typeof k.o === 'string' && validateKey(k.k).ok) vault = { key: k.k, origin: k.o };
-    helper = readHelper();
     // how much of the video analysis is remembered in this browser (shown in the settings); only looked at when the feature is on
     if (settings.cu.enabled) import('./web-cu.js').then((m) => m.cacheInfo()).then((info) => { cuCache = info; }, () => {});
     return K;
@@ -125,7 +107,7 @@
 
   async function explainNetworkError(info, st) {
     if (!info || info.code !== 'NETWORK') return info;
-    const onThisComputer = st.provider === 'builtin' || (st.provider === 'local' && isLoopbackHost(st.effectiveBaseUrl));
+    const onThisComputer = st.provider === 'local' && isLoopbackHost(st.effectiveBaseUrl);
     if (!onThisComputer) return info;
     // the browser records its decision a moment after the request has failed
     let state = await loopbackPermission();
@@ -133,10 +115,7 @@
     return state === 'denied' ? Object.assign({}, info, { code: 'LNA_BLOCKED' }) : info;
   }
 
-  const helperEndpoint = () => ({ baseUrl: 'http://127.0.0.1:' + helper.port + '/v1', origin: 'http://127.0.0.1:' + helper.port, key: helper.key, port: helper.port });
-
   function credentialOf(ai) {
-    if (ai.provider === 'builtin') return 'none';
     if (ai.provider === 'local') return 'optional';
     if (ai.auth === 'entra' && (ai.provider === 'azure' || ai.provider === 'foundry')) return 'entra';
     return 'key';
@@ -151,7 +130,7 @@
   // go to, so the user says yes once. While a key is being entered (`always`) the user is asked even when the address is on the saved list: every GitHub
   // Pages site of an account shares this browser storage, so another page could have put an address there, and the key is only kept for the tab anyway.
   function endpointNeedsOk(provider, url, always) {
-    if (provider === 'builtin' || provider === 'local' || !url || !url.ok || url.local) return false;
+    if (provider === 'local' || !url || !url.ok || url.local) return false;
     if (VEW.net.wellKnown.indexOf(url.origin) >= 0) return false;
     return !!always || !VEW.net.trust.has(url.origin);
   }
@@ -173,39 +152,20 @@
     return Object.assign(base, { available: true, enabled: cfg.enabled, endpoint: cfg.endpoint, effectiveEndpoint: origin, apiVersion: K.core.cu.API_VERSION, needs, ready: needs === null, cache: cuCache });
   }
 
-  function builtinStatus() {
-    const m = K.core.llmCatalog.CATALOG.find((x) => x.id === K.core.llmCatalog.DEFAULT_MODEL_ID);
-    return {
-      model: { id: m.id, name: m.name, license: m.license, licenseUrl: m.licenseUrl, source: m.source, total: K.core.llmCatalog.totalBytes(m), needsRamGb: m.needsRamGb, vision: !!m.vision },
-      paired: !!(helper.port && helper.key),
-      port: helper.port,
-      defaultPort: K.C.LOCAL_AI_DEFAULT_PORT,
-      served: helper.model,
-      // what the last connection test found (nothing is probed while the status is read)
-      connection: helperState.phase,
-      error: helperState.error,
-      // 'denied' when the browser refused the connection to this computer (Local Network Access), so that "blocked" is not shown as "not started"
-      lna: helperState.lna || 'unknown',
-      server: { phase: 'stopped', backend: null, port: helper.port, error: null, fallbackFrom: null, busy: 0, detectedGpu: null },
-    };
-  }
-
   function status() {
     const ai = settings;
-    const builtin = ai.provider === 'builtin';
-    const url = builtin ? { ok: true, url: '', origin: '', local: true } : effectiveUrl(ai);
+    const url = effectiveUrl(ai);
     const credential = credentialOf(ai);
     const urlError = url.ok ? (ai.provider === 'local' && !url.local ? 'URL_NOT_LOCAL' : '') : url.code;
     // A key is only valid for the endpoint it was entered for: changing the endpoint without a new key must never send it elsewhere.
-    const keyMismatch = !builtin && !!vault.key && url.ok && vault.origin !== url.origin;
+    const keyMismatch = !!vault.key && url.ok && vault.origin !== url.origin;
     let needs = null;
-    if (builtin) needs = helper.port && helper.key ? null : 'install';
-    else if (credential === 'key' && !vault.key) needs = 'key';
+    if (credential === 'key' && !vault.key) needs = 'key';
     else if (credential === 'entra' && !vault.key) needs = 'key';
     else if (urlError) needs = 'url';
     else if ((credential === 'key' || credential === 'entra') && keyMismatch) needs = 'mismatch';
     else if (!ai.model) needs = 'model';
-    const hasKey = builtin ? false : !!vault.key;
+    const hasKey = !!vault.key;
     return {
       hasKey,
       masked: hasKey ? (vault.key.length >= 12 ? '••••' + vault.key.slice(-4) : '••••') : '',
@@ -218,7 +178,7 @@
       baseUrl: ai.baseUrl,
       effectiveBaseUrl: url.ok && !urlError ? url.url : '',
       urlError,
-      model: builtin ? K.core.llmCatalog.DEFAULT_MODEL_ID : ai.model,
+      model: ai.model,
       apiVersion: ai.apiVersion,
       shareNames: ai.shareNames,
       keyMismatch,
@@ -226,9 +186,8 @@
       // the sign-in with an access token needs no command line tool on this computer
       azCli: true,
       ready: needs === null,
-      // the Local AI helper's model can look at the video (find_in_video)
-      vision: builtin && !!(helper.port && helper.key) && helper.vision !== false,
-      builtin: builtinStatus(),
+      // a browser has no model that looks at the video by itself (find_in_video is for the desktop app's models); with a Foundry analysis it can still read it
+      vision: false,
       cu: cuStatus(ai, url, credential, keyMismatch, needs === null),
     };
   }
@@ -279,10 +238,6 @@
 
   function providerFor(st, opts) {
     const o = opts || {};
-    if (st.provider === 'builtin') {
-      const ep = helperEndpoint();
-      return K.core.providers.createProvider({ kind: 'local', baseUrl: ep.baseUrl, model: st.model, apiKey: ep.key, fetch: fetchFor('local'), timeoutMs: BUILTIN_REQUEST_TIMEOUT_MS });
-    }
     const origin = effectiveUrl(settings).origin;
     // the key / token is handed out for the address it was entered for only
     const apiKey = st.hasKey && !st.keyMismatch && vault.origin === origin ? vault.key : '';
@@ -346,37 +301,7 @@
 
   const tidyModel = (id) => (/[\\/]/.test(id) ? id.split(/[\\/]/).filter(Boolean).pop() : id);
 
-  // POST /chat/completions of the Local AI helper (the same endpoint the provider uses), for the requests that are not a conversation: the vision
-  // questions of find_in_video
-  async function postChat(ep, body, signal) {
-    const res = await VEW.net.fetch(ep.baseUrl + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + ep.key }, body: JSON.stringify(body), signal });
-    const text = await readText(res, 8 * 1024 * 1024);
-    const AiError = K.core.providers.AiError;
-    if (!res.ok) throw new AiError(res.status === 401 || res.status === 403 ? 'AUTH' : (res.status >= 500 ? 'SERVER' : 'BAD_REQUEST'), 'The local model answered HTTP ' + res.status, { status: res.status, detail: text.slice(0, 200) });
-    try { return JSON.parse(text); } catch (e) { throw new AiError('BAD_RESPONSE', 'The local model returned a response that is not JSON'); }
-  }
-
-  /* ------------------------------------------------------------------ the assistant's eyes and its video analysis */
-
-  function makePerception(ep, session, userText, signal, runId, extractor) {
-    try {
-      const vlm = K.core.perceptionVlm.createVlm({ boxFormat: 'k1000', chat: (body, sig) => postChat(ep, body, sig || signal) });
-      return K.core.perception.createPerception({
-        pieces: session.originalMap(),
-        fileOf: (mediaId) => { if (!VEW.getMedia(mediaId)) throw new Error('media is gone'); return mediaId; },
-        ffmpegPath: 'browser', // the desktop frame source wants one; the pictures come from the browser's decoder (extract below)
-        procs: null,
-        vlm,
-        userText,
-        signal,
-        extract: extractor.extract,
-        onProgress: (p) => VEW.emit('ai:step', Object.assign({ runId, kind: 'search' }, p)),
-        log: () => {},
-      });
-    } catch (e) {
-      return null; // without eyes the assistant still edits by time
-    }
-  }
+  /* ------------------------------------------------------------------ the assistant's video analysis */
 
   // locate_in_video: WHERE in the picture something is. The Content Understanding analysis says WHEN but has no positions; the position comes from a few small
   // pictures that are shown to the model the user chose for the chat (the same deployment, address and key as the conversation itself). The user is asked before
@@ -427,11 +352,6 @@
     const r = req && typeof req === 'object' ? req : {};
     if (!K.C.AI_PROVIDERS.includes(r.provider)) return fail('BAD_PROVIDER');
     const provider = r.provider;
-    if (provider === 'builtin') {
-      settings = sanitize(Object.assign({}, settings, { provider, auth: 'key', baseUrl: '', model: '', apiVersion: '', shareNames: r.shareNames !== false }));
-      saveSettings();
-      return { ok: true, keyCleared: false, status: status() };
-    }
     const auth = r.auth === 'entra' && (provider === 'azure' || provider === 'foundry') ? 'entra' : 'key';
     // What portals show ("Target URI", project endpoint, a full API URL) is cleaned up first; deployment name and API version are picked up from it.
     const clean = K.core.endpoints.normalizeEndpoint(provider, typeof r.baseUrl === 'string' ? r.baseUrl : '', { model: typeof r.model === 'string' ? r.model : '', apiVersion: typeof r.apiVersion === 'string' ? r.apiVersion : '' });
@@ -513,41 +433,14 @@
   async function aiTest() {
     await ensure();
     const st = status();
-    if (st.needs === 'install') return fail('NOT_INSTALLED');
     if (st.needs === 'key') return fail('NO_KEY');
     if (st.urlError) return fail(st.urlError);
     if (st.needs === 'mismatch') return fail('KEY_MISMATCH');
     if (active) return fail('BUSY');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), st.provider === 'builtin' ? BUILTIN_TEST_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_TEST_TIMEOUT_MS : TEST_TIMEOUT_MS));
+    const timer = setTimeout(() => controller.abort(), st.provider === 'local' ? LOCAL_TEST_TIMEOUT_MS : TEST_TIMEOUT_MS);
     active = { controller };
     try {
-      const AiError = K.core.providers.AiError;
-      if (st.provider === 'builtin') {
-        // 1. is anything there? (/health needs no key)  2. does the key open it, which model?  3. can it look at pictures?
-        const ep = helperEndpoint();
-        helperState = { phase: 'unreachable', error: '' };
-        let health;
-        try { health = await VEW.net.fetch(ep.origin + '/health', { method: 'GET', signal: controller.signal }); } catch (e) {
-          if (controller.signal.aborted) throw new AiError('TIMEOUT', 'The request timed out');
-          throw new AiError('NETWORK', 'The Local AI did not answer', { detail: String((e && e.message) || e).slice(0, 200) });
-        }
-        if (!health.ok) throw new AiError('NETWORK', 'The Local AI answered HTTP ' + health.status);
-        const provider = providerFor(st);
-        let models;
-        try { models = await provider.listModels({ signal: controller.signal }); } catch (e) {
-          if (e && e.code === 'AUTH') helperState = { phase: 'unauthorized', error: '' };
-          throw e;
-        }
-        helper.model = tidyModel(models[0] || '');
-        try {
-          const props = await getJson(ep.origin + '/props', { authorization: 'Bearer ' + ep.key }, controller.signal, 1024 * 1024);
-          if (props && props.modalities) helper.vision = !!props.modalities.vision;
-        } catch (e) { /* older servers have no /props: the model is assumed to see (the desktop model does) */ }
-        saveHelper();
-        helperState = { phase: 'ready', error: '' };
-        return { ok: true, models: models.slice(0, 300), modelOk: true, backend: undefined, vision: helper.vision !== false };
-      }
       const provider = providerFor(st, { listOnly: true });
       let models = [];
       try {
@@ -563,9 +456,7 @@
       }
       return { ok: true, models: models.slice(0, 300), modelOk };
     } catch (e) {
-      const info = await explainNetworkError(K.core.agent.aiErrorInfo(e), st);
-      if (st.provider === 'builtin' && info.code === 'LNA_BLOCKED') helperState = { phase: 'unreachable', error: '', lna: 'denied' };
-      return { ok: false, error: info };
+      return { ok: false, error: await explainNetworkError(K.core.agent.aiErrorInfo(e), st) };
     } finally {
       clearTimeout(timer);
       active = null;
@@ -582,7 +473,7 @@
     if (snapshot.error) return fail(snapshot.error);
     const controller = new AbortController();
     // the time limit of the request; it stands still while a video is being analysed (see makeAnalysis)
-    const budget = { left: st.provider === 'builtin' ? BUILTIN_RUN_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS), since: 0, timer: null };
+    const budget = { left: st.provider === 'local' ? LOCAL_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS, since: 0, timer: null };
     const arm = () => { budget.since = Date.now(); budget.timer = setTimeout(() => controller.abort(), Math.max(1000, budget.left)); };
     const disarm = () => { clearTimeout(budget.timer); budget.left -= Date.now() - budget.since; };
     arm();
@@ -595,12 +486,6 @@
     try {
       const provider = providerFor(st);
       const prompt = String(r.prompt || '');
-      let perceptionFactory;
-      if (st.vision) {
-        await getExtractor();
-        const ep = helperEndpoint();
-        perceptionFactory = (session) => makePerception(ep, session, prompt, controller.signal, runId, extractor);
-      }
       let analysisFactory;
       if (st.cu && st.cu.ready) {
         const cu = await webCu();
@@ -611,7 +496,7 @@
       }
       // WHERE in the picture (for a model that reads the analysis): only with Content Understanding, and only for a chat model that can be shown a picture
       let locatorFactory;
-      if (analysisFactory && !perceptionFactory && LOCATE_PROVIDERS.includes(st.provider)) {
+      if (analysisFactory && LOCATE_PROVIDERS.includes(st.provider)) {
         locatorFactory = (session) => makeLocator({ provider, st, session, userText: prompt, runSignal: controller.signal, runId, hooks: { pause: disarm, resume: arm }, getExtractor });
       }
       return await K.core.agent.runAgent({
@@ -623,7 +508,6 @@
         shareNames: st.shareNames,
         signal: controller.signal,
         onStep: (step) => VEW.emit('ai:step', Object.assign({ runId }, step)),
-        perceptionFactory,
         analysisFactory,
         locatorFactory,
       });
@@ -657,7 +541,7 @@
     if (discovering) return fail('BUSY');
     discovering = true;
     try {
-      const names = { 8473: 'Video Editor Local AI', 11434: 'Ollama', 1234: 'LM Studio', 8080: 'llama.cpp', 5272: 'Foundry Local' };
+      const names = { 11434: 'Ollama', 1234: 'LM Studio', 8080: 'llama.cpp', 5272: 'Foundry Local' };
       const servers = [];
       await Promise.all(K.C.DISCOVER_PORTS.map(async (port) => {
         const ctrl = new AbortController();
@@ -709,82 +593,8 @@
     return { ok: true, removed, status: status() };
   }
 
-  /* ------------------------------------------------------------------ api.llm: the Local AI helper */
-
-  async function llmPair(req) {
-    await ensure();
-    const port = Number(req && req.port);
-    const v = validateKey(req && req.key);
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) return fail('URL_INVALID');
-    if (!v.ok) return fail(v.code);
-    helper = { port, key: v.key, vision: true, model: '' };
-    helperState = { phase: 'unknown', error: '' };
-    saveHelper();
-    settings = sanitize(Object.assign({}, settings, { provider: 'builtin', auth: 'key', baseUrl: '', model: '', apiVersion: '' }));
-    saveSettings();
-    return { ok: true, status: status() };
-  }
-
-  async function llmForget() {
-    await ensure();
-    helper = { port: 0, key: '', vision: true, model: '' };
-    helperState = { phase: 'unknown', error: '' };
-    saveHelper();
-    return { ok: true, status: status() };
-  }
-
-  const notAvailable = () => Promise.resolve(fail('NOT_AVAILABLE', 'There is nothing to install in the browser: the model runs in the Local AI helper on this computer.'));
-
   api.ai = {
     status: aiStatus, save: aiSave, clearKey: aiClearKey, test: aiTest, run: aiRun, cancel: aiCancel, discover: aiDiscover, cuTest: aiCuTest, cuClearCache: aiCuClearCache,
     warm() { return Promise.resolve({ ok: true, started: false }); },
   };
-  api.llm = {
-    status: async () => { await ensure(); return Object.assign({ ok: true }, builtinStatus()); },
-    install: notAvailable,
-    set: notAvailable,
-    cancel() { return Promise.resolve(true); },
-    stop() { return Promise.resolve({ ok: true }); },
-    remove: llmForget,
-    pickDir() { return Promise.resolve({ canceled: true }); },
-    pair: llmPair,
-    forget: llmForget,
-  };
-
-  /* ------------------------------------------------------------------ the pairing link of the Local AI helper: #local-ai=<port>.<key> */
-
-  // The helper (web/local-ai/) opens this page with the port and a key it made, in the fragment (a fragment is never sent to a server). The user confirms
-  // once; the fragment is removed from the address bar and the history entry at once.
-  async function takePairingLink() {
-    const m = /^#local-ai=(\d{4,5})\.([A-Za-z0-9_-]{16,128})$/.exec(location.hash);
-    if (!m) return;
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* the fragment stays visible */ }
-    await ensure();
-    const port = Number(m[1]);
-    const choice = await api.messageBox({ type: 'question', title: t('app.title'), message: t('web.pair.msg', { port }), detail: t('web.pair.detail'), buttons: [t('web.pair.connect'), t('web.trust.cancel')], defaultId: 1, cancelId: 1 });
-    if (choice !== 0) return;
-    const res = await llmPair({ port, key: m[2] });
-    if (!res.ok) return;
-    const test = await aiTest();
-    if (window.VE.ai) {
-      await window.VE.ai.refresh();
-      if (test.ok) window.VE.ai.open();
-    }
-    if (window.VE.actions && window.VE.actions.toast) window.VE.actions.toast(t(test.ok ? 'web.pair.ok' : 'web.pair.failed'), test.ok ? 'success' : 'warning', 4200);
-  }
-
-  document.addEventListener('DOMContentLoaded', () => { setTimeout(() => { takePairingLink(); }, 400); });
-  window.addEventListener('hashchange', () => { takePairingLink(); });
-
-  // The helper opens a NEW tab for the pairing link, while the tab with the user's project may be open already: that tab learns about the pairing here
-  // (the event only reaches the OTHER tabs of this browser). Only the pairing is taken over: it is read and checked like at start, with the same effect as
-  // pairing in this tab (the local model is the one in use). The other settings are read when a tab opens and never applied live: every GitHub Pages site of
-  // an account shares this origin, so a storage event does not have to come from this editor.
-  window.addEventListener('storage', (e) => {
-    if (!K || e.storageArea !== localStorage || e.key !== LS_HELPER) return;
-    helper = readHelper();
-    helperState = { phase: 'unknown', error: '' };
-    if (helper.port) settings = sanitize(Object.assign({}, settings, { provider: 'builtin', auth: 'key', baseUrl: '', model: '', apiVersion: '' }));
-    if (window.VE && window.VE.ai && window.VE.ai.refresh) window.VE.ai.refresh();
-  });
 })();

@@ -12,7 +12,7 @@
 - 💻 **Windows kurulumu · Windows installer:** [Releases → son sürüm · latest release](https://github.com/ahmetcanalaca/videoeditor/releases/latest)
 - 📖 **Kılavuz · User guide:** [KULLANIM-KILAVUZU-USER-GUIDE.md](KULLANIM-KILAVUZU-USER-GUIDE.md)
 
-Sürüm · Version: Windows uygulaması · app **3.2.0** — web sürümü · web edition **4.1.0** — Lisans · Licence: [MIT](LICENSE)
+Sürüm · Version: Windows uygulaması · app **3.3.0** — web sürümü · web edition **4.2.0** — Lisans · Licence: [MIT](LICENSE)
 
 **Diller · Languages:** [🇹🇷 Türkçe](#tr) · [🇬🇧 English](#en)
 
@@ -35,7 +35,7 @@ Orijinal videolarınız **asla değiştirilmez**; sonuç yeni bir dosyaya yazıl
 ### Başlamak için
 
 1. **Web sürümü:** [ahmetcanalaca.github.io/videoeditor](https://ahmetcanalaca.github.io/videoeditor/) adresini Chrome veya Edge'de açın. Kurulum yok; videolarınız tarayıcıda işlenir ve yüklenmez (isteğe bağlı Foundry video analizi hariç: onayınızla küçültülmüş bir kopya kendi Azure kaynağınıza gider).
-2. **Windows uygulaması:** [Releases](https://github.com/ahmetcanalaca/videoeditor/releases/latest) sayfasından `VideoEditor-3.2.0-Setup-x64.exe` dosyasını indirip çift tıklayın. **Yönetici yetkisi gerekmez** (yalnızca sizin kullanıcınıza kurulur).
+2. **Windows uygulaması:** [Releases](https://github.com/ahmetcanalaca/videoeditor/releases/latest) sayfasından `VideoEditor-3.3.0-Setup-x64.exe` dosyasını indirip çift tıklayın. **Yönetici yetkisi gerekmez** (yalnızca sizin kullanıcınıza kurulur).
 
 > ⚠️ Kurulum dosyası kod imzalı değildir. Windows "bilgisayarınızı korudu" derse **Ek bilgi → Yine de çalıştır** deyin; şirket bilgisayarında BT politikası engelleyebilir. Dosyanın SHA-256 değeri Releases sayfasındaki `.sha256` dosyasındadır.
 
@@ -43,7 +43,7 @@ Adım adım anlatım: **[Kullanım kılavuzu](KULLANIM-KILAVUZU-USER-GUIDE.md)**
 
 ### API anahtarı / hesap gerekir mi? **Hayır.**
 
-Düzenleme tamamen yerel ve çevrimdışıdır. Uygulamada **hiçbir API anahtarı, hesap, bulut hizmeti, telemetri veya otomatik güncelleme yoktur.** Yapay zekâyı da anahtarsız kullanabilirsiniz (yerleşik model). Yalnızca isteğe bağlı bulut sağlayıcılarında *kendi* anahtarınızı girersiniz.
+Düzenleme tamamen yerel ve çevrimdışıdır. Uygulamada **hiçbir API anahtarı, hesap, bulut hizmeti, telemetri veya otomatik güncelleme yoktur.** Yapay zekâyı da anahtarsız kullanabilirsiniz (yerleşik model veya Foundry Local). Yalnızca isteğe bağlı bulut sağlayıcılarında *kendi* anahtarınızı girersiniz.
 
 ### Yapay zeka asistanı (isteğe bağlı)
 
@@ -52,17 +52,27 @@ Komutu yazarsınız, asistan zaman çizelgesini düzenler. Yaptığı her şey *
 | Seçenek | Anahtar | Videoya bakar mı? | Veriler nereye gider? |
 |---|---|---|---|
 | **Yerleşik yerel model** (Qwen3.5-4B), önerilen | gerekmez | **Evet** (kareleri tarar) | Hiçbir yere. Model ≈ 3,4 GB'tır, tek tıkla indirilir ve bilgisayarınızda çalışır |
-| Dış yerel sunucu (Foundry Local, Ollama, LM Studio, llama.cpp) | gerekmez | modele bağlı | Yalnızca bu bilgisayar |
+| **Foundry Local** (Microsoft) · *yeni, yalnızca Windows uygulamasında* | gerekmez | **Evet** (görüntüye bakan modelle, örn. `qwen3.5-4b`) | Yalnızca bu bilgisayar. Foundry Local'i Microsoft'tan siz kurarsınız (aşağıda) |
+| Diğer yerel sunucular (Ollama, LM Studio, llama.cpp) | gerekmez | modele bağlı | Yalnızca bu bilgisayar |
 | OpenAI · Azure OpenAI · Microsoft Foundry · Anthropic · Gemini | kendi anahtarınız (Foundry'de Entra ID de olur) | hayır (yalnızca metin) | Komutunuz ve zaman çizelgesinin metin özeti → seçtiğiniz sağlayıcı |
 | Foundry + **Content Understanding** (isteğe bağlı) | kendi Foundry kaynağınız | içeriğini okur: sahneler ve konuşma | **Her seferinde onayınızla** videonun küçültülmüş kopyası → kendi Azure kaynağınız |
 
-- Web sürümünde yerel model için küçük bir **Yerel AI yardımcısı** indirilir; model yine sizin bilgisayarınıza iner ve orada çalışır.
+**Foundry Local ile yerel yapay zekâ** (Windows uygulaması; zip, betik veya `.bat` yok):
+
+1. **Foundry Local'i Microsoft'un resmî yolundan kurun** (bu projenin parçası değildir): [resmî yükleyici](https://aka.ms/foundry-local-installer) ya da terminalde `winget install Microsoft.FoundryLocal` ([kurulum kılavuzu](https://learn.microsoft.com/azure/foundry-local/get-started)).
+2. Video Editör'de **AI** düğmesi → ⚙ **ayarlar** → Sağlayıcı: **Foundry Local**. Uygulama onu kendisi bulur; kurulu değilse resmî bağlantıları orada görürsünüz.
+3. Bir **model** seçin (önerilen: `qwen3.5-4b`, videoya da bakar). Bilgisayarınızda yoksa **İndir**'e basın; liste başta yalnızca indirilmişleri gösterir, **Tüm modelleri göster** ile Microsoft'un listesi açılır.
+4. **Kaydet ve sına**. Hazır: komut yazın, örn. *"köpeği yakınlaştır"*.
+
+Sunucuyu uygulama gerektiğinde başlatır (30 dakika kullanılmazsa kapanır). Ayrıntı, sınırlar ve gerçek deneme sonuçları: [kılavuz 5.7](KULLANIM-KILAVUZU-USER-GUIDE.md). ⚠️ Foundry Local'in sunucusu anahtar istemez: paylaşılan bir Windows'ta anahtarla korunan yerleşik modeli tercih edin.
+
+- **Web sürümünde** Foundry Local kullanılamaz (sunucusu tarayıcıların istediği CORS başlıklarını göndermiyor); asistan orada bulut sağlayıcılarıyla ve tarayıcılara izin veren yerel sunucularla (Ollama, LM Studio) çalışır. Foundry Local için Windows uygulamasını kullanın.
 - Foundry + Content Understanding, resmî belgelere göre yazıldı ve sahte sunucuyla sınandı; **gerçek bir Azure kaynağıyla henüz doğrulanmadı.** Yeni: zoom nesnenin *yerine* kilitlenebilir; bunun için birkaç küçük resim yalnızca ayrıca onayladığınızda sohbet modelinize gösterilir.
 - Asistan hata yapabilir; sonucu kontrol edin.
 
 ### Gizlilik ve güvenlik
 
-- Uygulama ağa **varsayılan olarak kapalıdır**; ağ yalnızca sizin başlattığınız işlerde açılır (model indirme, seçtiğiniz sağlayıcıya istek).
+- Uygulama ağa **varsayılan olarak kapalıdır**; ağ yalnızca sizin başlattığınız işlerde açılır (model indirme, seçtiğiniz sağlayıcıya istek). Foundry Local'in kendi internet işleri (model indirme, donanım bileşenleri) Foundry Local'indir, bu uygulamanın değil.
 - Anahtarlar Windows DPAPI ile şifrelenir ve proje dosyalarına yazılmaz. Web sürümünde anahtar yalnızca açık sekmenin oturumunda tutulur (tarayıcılar çökme kurtarma için bir kopya saklayabilir).
 - Güvenlik açığı bildirimi ve tasarım ayrıntıları: [SECURITY.md](SECURITY.md).
 
@@ -108,7 +118,7 @@ Your original videos are **never changed**; the result is written to a new file.
 ### Getting started
 
 1. **Web edition:** open [ahmetcanalaca.github.io/videoeditor](https://ahmetcanalaca.github.io/videoeditor/) in Chrome or Edge. Nothing to install; your videos are processed in the browser and not uploaded (except for the optional Foundry video analysis: with your confirmation a reduced copy goes to your own Azure resource).
-2. **Windows app:** download `VideoEditor-3.2.0-Setup-x64.exe` from [Releases](https://github.com/ahmetcanalaca/videoeditor/releases/latest) and double-click it. **No administrator rights needed** (it installs for your user only).
+2. **Windows app:** download `VideoEditor-3.3.0-Setup-x64.exe` from [Releases](https://github.com/ahmetcanalaca/videoeditor/releases/latest) and double-click it. **No administrator rights needed** (it installs for your user only).
 
 > ⚠️ The installer is not code-signed. If Windows says "protected your PC", choose **More info → Run anyway**; on a company computer an IT policy may block it. The SHA-256 of the file is in the `.sha256` file on the Releases page.
 
@@ -116,7 +126,7 @@ Step by step: **[User guide](KULLANIM-KILAVUZU-USER-GUIDE.md)**.
 
 ### Does it need an API key / account? **No.**
 
-Editing is fully local and offline. The app contains **no API key, account, cloud service, telemetry or automatic update.** You can use the AI without a key too (the built-in model). You only type *your own* key if you choose an optional cloud provider.
+Editing is fully local and offline. The app contains **no API key, account, cloud service, telemetry or automatic update.** You can use the AI without a key too (the built-in model or Foundry Local). You only type *your own* key if you choose an optional cloud provider.
 
 ### AI assistant (optional)
 
@@ -125,17 +135,27 @@ You type a command and the assistant edits the timeline. Everything it did is **
 | Option | Key | Looks at the video? | Where does the data go? |
 |---|---|---|---|
 | **Built-in local model** (Qwen3.5-4B), recommended | not needed | **Yes** (scans frames) | Nowhere. The model is ≈ 3.4 GB, downloaded with one click, and runs on your computer |
-| External local server (Foundry Local, Ollama, LM Studio, llama.cpp) | not needed | depends on the model | This computer only |
+| **Foundry Local** (Microsoft) · *new, Windows app only* | not needed | **Yes** (with a model that sees pictures, e.g. `qwen3.5-4b`) | This computer only. You install Foundry Local from Microsoft (below) |
+| Other local servers (Ollama, LM Studio, llama.cpp) | not needed | depends on the model | This computer only |
 | OpenAI · Azure OpenAI · Microsoft Foundry · Anthropic · Gemini | your own key (Entra ID also works with Foundry) | no (text only) | Your command and a text summary of the timeline → the provider you chose |
 | Foundry + **Content Understanding** (optional) | your own Foundry resource | reads the content: scenes and speech | **Each time with your permission**, a reduced copy of the video → your own Azure resource |
 
-- In the web edition a small **Local AI helper** is downloaded for the local model; the model still goes to your own computer and runs there.
+**Local AI with Foundry Local** (Windows app; no zip, script or `.bat`):
+
+1. **Install Foundry Local from Microsoft's official source** (it is not part of this project): the [official installer](https://aka.ms/foundry-local-installer), or in a terminal `winget install Microsoft.FoundryLocal` ([installation guide](https://learn.microsoft.com/azure/foundry-local/get-started)).
+2. In Video Editor press the **AI** button → ⚙ **settings** → Provider: **Foundry Local**. The app finds it by itself; if it is not installed you see the official links right there.
+3. Pick a **model** (recommended: `qwen3.5-4b`, which also looks at the video). If it is not on your computer press **Download**; the list first shows only what is downloaded, **Show all models** opens Microsoft's list.
+4. **Save and test**. Ready: type a command, e.g. *"zoom in on the dog"*.
+
+The app starts the server when needed (it stops after 30 minutes without use). Details, limits and the real-trial results: [guide 5.7](KULLANIM-KILAVUZU-USER-GUIDE.md). ⚠️ Foundry Local's server takes no key: on a shared Windows prefer the built-in model, which is protected by a key.
+
+- **In the web edition** Foundry Local cannot be used (its server does not send the CORS headers browsers require); there the assistant works with cloud providers and with local servers that allow browsers (Ollama, LM Studio). Use the Windows app for Foundry Local.
 - Foundry + Content Understanding was written from the official documentation and tested against a mock server; it has **not yet been verified against a real Azure resource.** New: the zoom can lock onto the *position* of an object; for that a few small pictures are shown to your chat model only when you confirm it separately.
 - The assistant can make mistakes; check the result.
 
 ### Privacy and security
 
-- The app is **offline by default**; the network is opened only for things you start (downloading the model, a request to the provider you chose).
+- The app is **offline by default**; the network is opened only for things you start (downloading the model, a request to the provider you chose). Foundry Local's own internet jobs (model downloads, hardware components) are Foundry Local's, not this app's.
 - Keys are encrypted with Windows DPAPI and are never written into project files. In the web edition the key stays in the open tab's session (a browser may keep a copy for crash recovery).
 - Reporting a vulnerability and the design details: [SECURITY.md](SECURITY.md).
 

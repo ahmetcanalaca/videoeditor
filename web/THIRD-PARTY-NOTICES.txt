@@ -13,17 +13,3 @@ Mediabunny 1.65.1 - Mozilla Public License 2.0
   Source: https://github.com/Vanilagy/mediabunny  (the complete corresponding source of this exact version is the tag v1.65.1 of that repository)
   Licence text: vendor/mediabunny/LICENSE
   Copyright (c) Vanilagy
-
-
-Downloaded by the optional "Local AI helper" (web/local-ai/, offered as a zip next to the site) - NOT part of this site and not distributed with it
------------------------------------------------------------------------------------------------------------------------------------------------------
-The helper is a script of this project (MIT). When a user runs it, it downloads the following from their original sources on the user's own computer
-(addresses, sizes and SHA-256 values are pinned in web/local-ai/pins.json):
-
-llama.cpp (llama-server), release b12212 - MIT License
-  Source: https://github.com/ggml-org/llama.cpp   Copyright (c) 2023-2026 The ggml authors
-  The release archive also contains the LLVM OpenMP runtime (libomp.dll, Apache License 2.0 with LLVM Exceptions); its licence text is in the archive.
-
-Qwen3.5-4B (Q4_K_M and the image encoder "mmproj", GGUF files by unsloth) - Apache License 2.0
-  Model: https://huggingface.co/Qwen/Qwen3.5-4B   GGUF conversion: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF (fixed revision, see pins.json)
-  Verify the licence of the model weights yourself before redistributing anything.

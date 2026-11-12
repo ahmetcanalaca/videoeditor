@@ -1,5 +1,5 @@
 'use strict';
-// A stand-in for a model server on this computer (the Local AI helper, Ollama, LM Studio, llama.cpp) for the tests of the web assistant: the OpenAI
+// A stand-in for a model server on this computer (Ollama, LM Studio, llama.cpp) for the tests of the web assistant: the OpenAI
 // protocol with an API key, the endpoints llama-server has (/health without a key, /props), CORS (the page is another origin) and scripted answers.
 //   const mock = await start({ key, chat: async (body, entry) => ({ content?, tool_calls?: [{ name, args }] }) })
 const http = require('http');
@@ -44,6 +44,8 @@ function start(opts) {
           if (o.delayMs) await new Promise((r) => setTimeout(r, o.delayMs));
           if (closed) return;
           const msg = await o.chat(entry.body, entry);
+          // { httpStatus, error }: an error answer instead of a completion (e.g. 400 "does not support tools")
+          if (msg && msg.httpStatus) { if (!closed) send(msg.httpStatus, { error: { message: msg.error || 'error' } }); return; }
           if (!closed) send(200, completion(msg || { content: 'OK' }, ++seq));
         } catch (e) { if (!closed) send(500, { error: { message: String((e && e.message) || e) } }); }
         return;

@@ -8,21 +8,24 @@
   const t = (key, vars) => VE.i18n.t(key, vars);
   const api = window.api;
 
-  const PROVIDERS = ['builtin', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
-  const PROV_KEYS = { builtin: 'aiset.prov.builtin', openai: 'aiset.prov.openai', azure: 'aiset.prov.azure', foundry: 'aiset.prov.foundry', anthropic: 'aiset.prov.anthropic', gemini: 'aiset.prov.gemini', local: 'aiset.prov.local' };
-  const HINT_KEYS = { builtin: 'aiset.hint.builtin', openai: 'aiset.hint.openai', azure: 'aiset.hint.azure', foundry: 'aiset.hint.foundry', anthropic: 'aiset.hint.anthropic', gemini: 'aiset.hint.gemini', local: 'aiset.hint.local' };
+  // "foundrylocal" is not a provider here but an explanation: a web page cannot reach Foundry Local (its server sends no CORS headers), see buildSettings
+  const PROVIDERS = ['foundrylocal', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
+  const PROV_KEYS = { foundrylocal: 'aiset.prov.foundrylocal', openai: 'aiset.prov.openai', azure: 'aiset.prov.azure', foundry: 'aiset.prov.foundry', anthropic: 'aiset.prov.anthropic', gemini: 'aiset.prov.gemini', local: 'aiset.prov.local' };
+  const HINT_KEYS = { foundrylocal: 'aiset.hint.foundrylocal', openai: 'aiset.hint.openai', azure: 'aiset.hint.azure', foundry: 'aiset.hint.foundry', anthropic: 'aiset.hint.anthropic', gemini: 'aiset.hint.gemini', local: 'aiset.hint.local' };
   const AUTH_KEYS = { key: 'aiset.auth.key', entra: 'aiset.auth.entra' };
   const URL_HINT = {
-    builtin: '', openai: 'https://api.openai.com/v1', azure: 'https://RESOURCE.openai.azure.com', foundry: 'https://RESOURCE.services.ai.azure.com/api/projects/PROJECT',
+    foundrylocal: '', openai: 'https://api.openai.com/v1', azure: 'https://RESOURCE.openai.azure.com', foundry: 'https://RESOURCE.services.ai.azure.com/api/projects/PROJECT',
     anthropic: 'https://api.anthropic.com', gemini: 'https://generativelanguage.googleapis.com', local: 'http://127.0.0.1:11434/v1',
   };
-  const MODEL_HINT = { builtin: '', openai: 'gpt-4o-mini', azure: 'my-deployment', foundry: 'my-deployment', anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-flash', local: 'qwen2.5:3b' };
+  const MODEL_HINT = { foundrylocal: '', openai: 'gpt-4o-mini', azure: 'my-deployment', foundry: 'my-deployment', anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-flash', local: 'qwen2.5:3b' };
+  // the official places for Foundry Local and for the desktop app (the explanation shows them as links; https only, opened in a new tab)
+  const FL_LINKS = { install: 'https://aka.ms/foundry-local-installer', docs: 'https://learn.microsoft.com/azure/foundry-local/get-started', desktop: 'https://github.com/ahmetcanalaca/videoeditor/releases/latest' };
   // problems the user can fix in the settings dialog (the error card then offers a shortcut)
   const FIXABLE = ['AUTH', 'FORBIDDEN', 'NO_KEY', 'NOT_CONFIGURED', 'KEY_MISMATCH', 'NOT_FOUND', 'NO_TOOLS', 'URL', 'URL_EMPTY', 'URL_INVALID', 'URL_SCHEME', 'URL_CREDENTIALS', 'URL_NOT_LOCAL',
-    'NOT_INSTALLED', 'MODEL_NOT_READY', 'HASH_MISMATCH', 'LLM_START_FAILED', 'LLM_START_TIMEOUT', 'RUNTIME_MISSING', 'WRITE_FAILED', 'ENTRA_NOT_CONFIRMED', 'ENDPOINT_NOT_CONFIRMED',
+    'ENTRA_NOT_CONFIRMED', 'ENDPOINT_NOT_CONFIRMED',
     'CU_NO_ENDPOINT', 'CU_ORIGIN_MISMATCH', 'CU_NOT_CONFIRMED', 'CU_URL_INVALID', 'CU_URL_SCHEME', 'CU_URL_CREDENTIALS', 'CU_ANALYZER_INVALID', 'CU_NO_ANALYZER', 'CU_NO_DEFAULTS', 'CU_LOCATION'];
   const EXAMPLES = ['ai.ex1', 'ai.ex2', 'ai.ex3', 'ai.ex4', 'ai.ex5'];
-  // what the assistant can do with the video's CONTENT (only with the built-in model)
+  // what the assistant can do with the video's CONTENT (the desktop app's models that look at pictures: not in the browser)
   const VISION_EXAMPLES = ['ai.exv1', 'ai.exv2', 'ai.exv3'];
   // ... and with an analysis by Azure Content Understanding (what is shown AND said)
   const CU_EXAMPLES = ['ai.exc1', 'ai.exc2', 'ai.exc3'];
@@ -34,7 +37,7 @@
   const MAX_HISTORY = 24;
 
   // The API key never reaches this file: the main process holds it and only reports a masked hint in `status`.
-  const state = { status: null, open: false, running: false, runId: 0, messages: [], history: [], live: null, committed: null, warmTried: false };
+  const state = { status: null, open: false, running: false, runId: 0, messages: [], history: [], live: null, committed: null };
   const r = {};
 
   const ready = () => !!(state.status && state.status.ready);
@@ -86,7 +89,6 @@
     const s = state.status;
     const tries = [];
     if (s && s.provider === 'local') tries.push('ai.err.' + code + '_LOCAL');
-    if (s && s.provider === 'builtin') tries.push('ai.err.' + code + '_BUILTIN');
     if (s && s.auth === 'entra') tries.push('ai.err.' + code + '_ENTRA');
     tries.push('ai.err.' + code);
     for (const key of tries) {
@@ -96,10 +98,10 @@
     return t('ai.err.INTERNAL');
   }
 
-  // errors the settings dialog can fix; for a model on this computer (the Local AI helper or another server) an unreachable server is one of them (not started, wrong port)
+  // errors the settings dialog can fix; for a model server on this computer an unreachable server is one of them (not started, wrong port)
   function isFixable(code) {
     const s = state.status;
-    return FIXABLE.includes(code) || ((code === 'NETWORK' || code === 'TIMEOUT') && !!s && (s.provider === 'local' || s.provider === 'builtin'));
+    return FIXABLE.includes(code) || ((code === 'NETWORK' || code === 'TIMEOUT') && !!s && s.provider === 'local');
   }
 
   /* ---------- rendering ---------- */
@@ -211,8 +213,7 @@
     const s = live.search;
     let label = t('ai.working');
     let ratio = null;
-    if (VE.llmUI.state.loading) label = t('ai.loadingModel');
-    else if (live.analysis) {
+    if (live.analysis) {
       label = analysisLabel(live.analysis);
       if (live.analysis.phase === 'prepare') ratio = live.analysis.fraction || 0;
     } else if (s) {
@@ -252,11 +253,6 @@
     if (needs === 'url') return { title: t('ai.setup.urlTitle'), text: t('ai.setup.url'), button: t('ai.setup.fix') };
     if (needs === 'mismatch') return { title: t('ai.setup.mismatchTitle'), text: t('ai.setup.mismatch'), button: t('ai.setup.fix') };
     if (needs === 'model') return { title: t('ai.setup.modelTitle'), text: t('ai.setup.model'), button: t('ai.setup.fix') };
-    if (needs === 'install') {
-      const busy = VE.llmUI.busyLine();
-      if (busy) return { title: t('ai.setup.installingTitle'), text: busy, button: t('ai.setup.fix'), icon: 'download' };
-      return { title: t('ai.setup.installTitle'), text: t('ai.setup.install'), button: t('ai.setup.installBtn'), icon: 'download' };
-    }
     return { title: t('ai.setup.title'), text: t('ai.setup.text'), button: t('ai.setup.button') };
   }
 
@@ -287,11 +283,6 @@
     r.state.className = 'ai-state' + (state.running ? ' busy' : (on ? ' ready' : ''));
     r.btn.dataset.state = on ? 'ready' : 'off';
     r.btn.classList.toggle('off', !on);
-    // "stop the model": only for the built-in model, and only while it is loaded or loading (it is not needed while a request is using it)
-    const srv = state.status && state.status.provider === 'builtin' && state.status.builtin ? state.status.builtin.server : null;
-    const loaded = !!srv && (srv.phase === 'ready' || srv.phase === 'starting');
-    r.stopModel.hidden = !loaded;
-    r.stopModel.disabled = state.running || (!!srv && srv.busy > 0);
     const banner = bannerInfo();
     r.banner.hidden = !banner;
     if (banner) {
@@ -314,30 +305,6 @@
   async function refresh() {
     try { state.status = await api.ai.status(); } catch (e) { state.status = null; }
     renderAll();
-    maybeWarm();
-  }
-
-  // The built-in model is started in the background as soon as the pane is open and the model is installed (once per such period,
-  // so that a model that cannot start is not retried in a loop).
-  function maybeWarm() {
-    const s = state.status;
-    const can = state.open && !!s && s.provider === 'builtin' && s.ready;
-    if (!can) { if (!state.open || !s || !s.ready) state.warmTried = false; return; }
-    if (state.warmTried) return;
-    state.warmTried = true;
-    api.ai.warm();
-  }
-
-  // "Stop model" (header button): unloads the built-in model and frees its memory. The next command starts it again by itself, so the pane must
-  // not start it again right away (maybeWarm) - it stays stopped until the pane is closed and opened again or a command needs it.
-  async function stopModel() {
-    r.stopModel.disabled = true;
-    state.warmTried = true;
-    let res = null;
-    try { res = await api.llm.stop(); } catch (e) { res = null; }
-    if (res && res.ok) VE.actions.toast(t('llm.stopped'), 'success', 2600);
-    else VE.actions.toast(errorText(res && res.error ? res.error : { code: 'INTERNAL' }), 'warning');
-    await refresh();
   }
 
   function open() {
@@ -354,7 +321,6 @@
   function close() {
     if (!state.open) return;
     state.open = false;
-    state.warmTried = false;
     r.pane.hidden = true;
     r.inspector.inert = false;
     r.btn.setAttribute('aria-pressed', 'false');
@@ -398,8 +364,6 @@
       }
       renderLog();
     });
-    // the model loading (llm:progress) and the search progress change the live card too
-    const offLoad = VE.llmUI.onChange(() => { if (state.live) renderLog(); });
     let res;
     try {
       res = await api.ai.run({ runId, prompt, history: state.history.slice(), snapshot: takeSnapshot() });
@@ -407,7 +371,6 @@
       res = { ok: false, error: { code: 'INTERNAL', message: String((e && e.message) || e) } };
     }
     off();
-    offLoad();
     const analyses = state.live ? state.live.analyses : [];
     state.running = false;
     state.live = null;
@@ -453,14 +416,14 @@
   function openSettings() {
     api.ai.status().then((status) => { state.status = status; }, () => { state.status = null; }).then(() => {
       renderState();
-      buildSettings(state.status || { provider: 'builtin', baseUrl: '', apiVersion: '', model: '', shareNames: true, hasKey: false, masked: '', encryptionAvailable: true, builtin: null });
+      buildSettings(state.status || { provider: 'foundry', baseUrl: '', apiVersion: '', model: '', shareNames: true, hasKey: false, masked: '', encryptionAvailable: true });
     });
   }
 
   function buildSettings(status) {
     const row = (label, control) => [el('label', { text: label }), control];
     const provider = el('select', {}, PROVIDERS.map((p) => el('option', { value: p, text: t(PROV_KEYS[p]) })));
-    provider.value = PROVIDERS.includes(status.provider) ? status.provider : 'builtin';
+    provider.value = PROVIDERS.includes(status.provider) ? status.provider : 'foundry';
     const providerHint = el('div', { class: 'hint' });
     const url = el('input', { type: 'text', spellcheck: 'false', autocomplete: 'off' });
     url.value = status.baseUrl || '';
@@ -496,11 +459,13 @@
     const keyHint = el('div', { class: 'hint' });
     const canEntra = () => provider.value === 'azure' || provider.value === 'foundry';
     const entra = () => canEntra() && auth.value === 'entra';
-    const builtin = () => provider.value === 'builtin';
+    // "Foundry Local" is an explanation here, not a provider: a web page cannot reach it (see the card below)
+    const info = () => provider.value === 'foundrylocal';
+    const panelled = () => info();
 
-    // web edition: "entra" is an access token that is pasted like a key (there is no Azure CLI in a browser), so the key row stays
     const syncAuth = () => {
-      const noKey = builtin();
+      // web edition: "entra" is an access token that is pasted like a key (there is no Azure CLI in a browser), so the key row stays
+      const noKey = panelled();
       keyRow.forEach((n) => { n.hidden = noKey; });
       keyHint.hidden = noKey || !keyHint.textContent;
       keyLabel.textContent = t(entra() ? 'aiset.token' : (provider.value === 'local' ? 'aiset.keyOptional' : 'aiset.key'));
@@ -514,18 +479,19 @@
       model.placeholder = MODEL_HINT[p];
       modelLabel.textContent = t(p === 'azure' || p === 'foundry' ? 'aiset.modelAzure' : 'aiset.model');
       providerHint.textContent = t(HINT_KEYS[p]);
-      // the built-in model has no address, model name or key: it brings its own panel instead
-      urlRow.forEach((n) => { n.hidden = builtin(); });
-      modelLabel.hidden = model.hidden = builtin();
+      // Foundry Local has no address, model name or key here: it is an explanation with links, and there is nothing to save
+      urlRow.forEach((n) => { n.hidden = panelled(); });
+      modelLabel.hidden = model.hidden = panelled();
       verRow.forEach((n) => { n.hidden = p !== 'azure'; });
       authRow.forEach((n) => { n.hidden = !canEntra(); });
       find.hidden = p !== 'local';
       found.hidden = found.hidden || p !== 'local';
-      builtinWrap.hidden = !builtin();
-      // the panel sits right below the provider row, and only exists in the dialog while "built-in" is chosen
-      if (builtin()) { if (!builtinWrap.isConnected) grid.after(builtinWrap); } else builtinWrap.remove();
-      shareRow.hidden = builtin();
-      note.innerHTML = t(builtin() ? 'llm.privacy' : 'aiset.privacy');
+      flWrap.hidden = !info();
+      if (info()) { if (!flWrap.isConnected) grid.after(flWrap); } else flWrap.remove();
+      shareRow.hidden = panelled();
+      note.hidden = info();
+      saveBtn.disabled = info();
+      warn.hidden = info() || status.encryptionAvailable !== false;
       if (!canEntra()) auth.value = 'key';
       syncAuth();
       syncCu(state.status || status);
@@ -533,25 +499,27 @@
     const syncKey = (st2) => {
       key.placeholder = st2.hasKey ? '' : t(entra() ? 'aiset.tokenPlaceholder' : 'aiset.keyPlaceholder');
       keyHint.textContent = st2.hasKey ? t('aiset.keySaved', { mask: st2.masked }) : '';
-      keyHint.hidden = builtin() || !st2.hasKey;
-      if (clear) clear.hidden = builtin() || !st2.hasKey;
+      keyHint.hidden = panelled() || !st2.hasKey;
+      if (clear) clear.hidden = panelled() || !st2.hasKey;
     };
     const say = (kind, text) => { result.hidden = !text; result.className = 'ai-result ' + kind; result.textContent = text || ''; };
 
-    // the built-in model: install / progress / folder / graphics chip (see llmui.js)
-    const refreshStatus = () => refresh();
-    const builtinPanel = VE.llmUI.panel({
-      getBuiltin: () => (state.status && state.status.builtin) || status.builtin,
-      refresh: refreshStatus,
-      ensureProvider: async () => {
-        if (state.status && state.status.provider === 'builtin') return;
-        const saved = await api.ai.save({ provider: 'builtin', shareNames: true });
-        if (saved.ok) state.status = saved.status;
-      },
-      say,
-      errorText,
-    });
-    const builtinWrap = el('div', { class: 'llm-wrap' }, [builtinPanel.node]);
+    // Foundry Local (Microsoft's runtime for models on this computer) runs the models of the desktop app; its server sends no CORS headers, so a web page cannot talk to it.
+    // The card says so and gives the official places (https only, new tab) instead of a form that could only fail.
+    const flLink = (href, label, primary, iconName) => el('a', { class: 'btn ' + (primary ? 'primary' : 'outline'), href, target: '_blank', rel: 'noopener noreferrer' }, [icon(iconName), el('span', { class: 'lbl', text: label })]);
+    const flWrap = el('div', { class: 'llm-wrap', 'data-web': 'foundry-local' }, [
+      el('div', { class: 'llm-panel' }, [
+        el('div', { class: 'llm-title', text: t('web.fl.title') }),
+        el('div', { class: 'llm-state warn', 'data-web': 'fl-state', text: t('web.fl.state') }),
+        el('div', { class: 'hint', text: t('web.fl.why') }),
+        el('div', { class: 'llm-actions' }, [
+          flLink(FL_LINKS.desktop, t('web.fl.desktop'), true, 'download'),
+          flLink(FL_LINKS.install, t('web.fl.get'), false, 'download'),
+          flLink(FL_LINKS.docs, t('web.fl.docs'), false, 'info'),
+        ]),
+        el('div', { class: 'about-note', text: t('web.fl.alt') }),
+      ]),
+    ]);
 
     const grid = el('div', { class: 'form-grid' }, [
       ...row(t('aiset.provider'), provider),
@@ -600,7 +568,7 @@
       cuWrap.hidden = provider.value !== 'foundry';
       cuDetails.hidden = !cuOn.checked;
       // while the video analysis is on, the note about what is sent says so
-      if (!builtin()) note.innerHTML = t(provider.value === 'foundry' && cuOn.checked ? 'aiset.privacyCu' : 'aiset.privacy');
+      if (!panelled()) note.innerHTML = t(provider.value === 'foundry' && cuOn.checked ? 'aiset.privacyCu' : 'aiset.privacy');
       const derived = deriveCuAddress(url.value) || (url.value.trim() ? '' : (s2.effectiveEndpoint || ''));
       cuDerived.textContent = cuEndpoint.value.trim() ? '' : t(derived ? 'aiset.cu.derived' : 'aiset.cu.derivedNone', { addr: derived });
       cuDerived.hidden = !cuDerived.textContent;
@@ -672,25 +640,6 @@
     async function saveAndTest() {
       saveBtn.disabled = true; clear.disabled = true;
       say('busy', t('aiset.testing'));
-      if (builtin()) {
-        // nothing to type: save the choice, then start the model once to prove that it works on this computer
-        const savedB = await api.ai.save({ provider: 'builtin', shareNames: true });
-        saveBtn.disabled = false; clear.disabled = false;
-        if (!savedB.ok) { say('err', errorText(savedB.error)); return; }
-        state.status = savedB.status;
-        renderAll();
-        builtinPanel.update();
-        if (savedB.status.needs === 'install') { say('ok', t('llm.saveNeedsInstall')); return; }
-        say('busy', t('llm.starting'));
-        saveBtn.disabled = true; clear.disabled = true;
-        const started = await api.ai.test();
-        saveBtn.disabled = false; clear.disabled = false;
-        await refreshStatus();
-        builtinPanel.update();
-        if (!started.ok) { say('err', errorText(started.error) + (started.error && started.error.detail ? ' (' + started.error.detail + ')' : '')); return; }
-        say('ok', t('llm.testOk', { backend: t(started.backend === 'vk' ? 'llm.backend.vkShort' : 'llm.backend.cpuShort') }));
-        return;
-      }
       const cuReq = provider.value === 'foundry' ? { enabled: cuOn.checked, endpoint: cuEndpoint.value, analyzer: cuAnalyzer.value, location: cuLocation.value } : undefined;
       const saved = await api.ai.save({ provider: provider.value, baseUrl: url.value, model: model.value, apiVersion: version.value, shareNames: share.checked, auth: auth.value, apiKey: key.value, cu: cuReq });
       // a rejected save keeps what was typed so it can be corrected; the secret leaves the DOM as soon as the main process has it
@@ -733,28 +682,23 @@
     key.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveAndTest(); } });
 
     const body = el('div', { style: { display: 'contents' } }, [providerHint, grid, found, models, keyHint, authHint, shareRow, warn, cuWrap, note, result]);
-    syncProvider(); // again, now that the dialog has a place to put the built-in model's panel
-    VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn], onClose: () => builtinPanel.destroy() });
+    syncProvider(); // again, now that the dialog has a place to put the Foundry Local card
+    VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn] });
   }
 
   /* ---------- wiring ---------- */
 
   function init() {
-    ['ai-pane', 'ai-log', 'ai-input', 'ai-send', 'ai-undo-row', 'ai-undo', 'ai-state', 'ai-settings', 'ai-stop-model', 'ai-close', 'ai-banner', 'ai-banner-icon', 'ai-banner-title', 'ai-banner-text', 'ai-banner-btn', 'ai-banner-btn-icon', 'ai-banner-btn-label', 'btn-ai', 'inspector'].forEach((id) => {
+    ['ai-pane', 'ai-log', 'ai-input', 'ai-send', 'ai-undo-row', 'ai-undo', 'ai-state', 'ai-settings', 'ai-close', 'ai-banner', 'ai-banner-icon', 'ai-banner-title', 'ai-banner-text', 'ai-banner-btn', 'ai-banner-btn-icon', 'ai-banner-btn-label', 'btn-ai', 'inspector'].forEach((id) => {
       r[id.replace(/-([a-z])/g, (m, c) => c.toUpperCase())] = document.getElementById(id);
     });
     r.pane = r.aiPane; r.log = r.aiLog; r.input = r.aiInput; r.send = r.aiSend; r.undoRow = r.aiUndoRow; r.state = r.aiState;
     r.banner = r.aiBanner; r.bannerIcon = r.aiBannerIcon; r.bannerTitle = r.aiBannerTitle; r.bannerText = r.aiBannerText; r.bannerBtn = r.aiBannerBtn; r.bannerBtnIcon = r.aiBannerBtnIcon; r.bannerLabel = r.aiBannerBtnLabel;
     r.btn = r.btnAi;
-    r.stopModel = r.aiStopModel;
-    VE.llmUI.init();
-    // download / verification progress and the model starting up are shown in the banner and in the live card
-    VE.llmUI.onChange(() => { if (state.open) { renderState(); updateControls(); } });
 
     r.btn.addEventListener('click', toggle);
     r.aiClose.addEventListener('click', () => { close(); r.btn.focus(); });
     r.aiSettings.addEventListener('click', openSettings);
-    r.aiStopModel.addEventListener('click', stopModel);
     r.bannerBtn.addEventListener('click', openSettings);
     r.send.addEventListener('click', () => { if (state.running) cancel(); else send(); });
     r.aiUndo.addEventListener('click', () => VE.actions.undo());

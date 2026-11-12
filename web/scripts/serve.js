@@ -6,9 +6,7 @@
 // --headers    coi: add Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy (credentialless) to try cross-origin isolation
 const http = require('http');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { pack } = require('./local-ai-pack');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -38,13 +36,6 @@ function start(opts) {
   }
   // extra folders served under absolute prefixes (tests: { '/__fixtures__/': dir })
   const mounts = Object.keys(opts.mounts || {}).map((prefix) => ({ prefix, dir: path.resolve(opts.mounts[prefix]) }));
-  // from the source tree, the download of the Local AI helper (zip + info.json) is packed on the fly, as scripts/build.js does for the published site
-  let packDir = '';
-  if (opts.localAi !== false && fs.existsSync(path.join(root, 'package.json')) && fs.existsSync(path.join(root, 'local-ai', 'pins.json'))) {
-    packDir = fs.mkdtempSync(path.join(os.tmpdir(), 've-web-localai-'));
-    pack({ root, out: packDir });
-    mounts.push({ prefix: base + 'local-ai/', dir: path.join(packDir, 'local-ai') });
-  }
   // tests only: POST /__upload__/<name> stores the body in opts.uploads (the page hands exported files to the test this way)
   const uploads = opts.uploads ? path.resolve(opts.uploads) : '';
   const server = http.createServer((req, res) => {
@@ -90,7 +81,7 @@ function start(opts) {
         server,
         port: server.address().port,
         base,
-        close: () => new Promise((r) => server.close(() => { if (packDir) fs.rmSync(packDir, { recursive: true, force: true }); r(); })),
+        close: () => new Promise((r) => server.close(() => r())),
       });
     });
   });

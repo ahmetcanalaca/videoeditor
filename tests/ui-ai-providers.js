@@ -22,7 +22,11 @@ const llm = { requests: [], queue: [], pings: [], fallback: null, url: '', port:
 const text = (t) => ({ json: { choices: [{ message: { role: 'assistant', content: t }, finish_reason: 'stop' }], usage: { prompt_tokens: 50, completion_tokens: 10 } } });
 const calls = (list) => ({ json: { choices: [{ message: { role: 'assistant', content: null, tool_calls: list.map((c, i) => ({ id: 'call_' + i, type: 'function', function: { name: c[0], arguments: JSON.stringify(c[1]) } })) }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 80, completion_tokens: 20 } } });
 const agentCalls = () => llm.requests.filter((r) => r.method === 'POST' && r.body && Array.isArray(r.body.tools));
-const pingCalls = () => llm.requests.filter((r) => r.method === 'POST' && r.body && !r.body.tools);
+// the connection test sends no tools; neither does a request of the assistant whose tools are written into the prompt (a model without tool calling)
+const isPrompted = (b) => !!b && !b.tools && (b.messages || []).some((m) => typeof m.content === 'string' && m.content.includes('HOW TO CALL TOOLS'));
+const isPing = (b) => !!b && !b.tools && !isPrompted(b);
+const promptedCalls = () => llm.requests.filter((r) => r.method === 'POST' && isPrompted(r.body));
+const pingCalls = () => llm.requests.filter((r) => r.method === 'POST' && isPing(r.body));
 
 function startLlm() {
   llm.server = http.createServer((req, res) => {
@@ -34,7 +38,7 @@ function startLlm() {
       llm.requests.push({ method: req.method, url: req.url, headers: req.headers, body });
       let spec;
       if (req.method === 'GET') spec = /\/models$/.test(req.url) ? { json: { data: [{ id: 'mock-model' }, { id: 'mock-model-mini' }] } } : { status: 404, json: {} };
-      else if (body && !body.tools) spec = llm.pings.length ? llm.pings.shift() : text('OK'); // connection test
+      else if (isPing(body)) spec = llm.pings.length ? llm.pings.shift() : text('OK'); // connection test
       else spec = llm.queue.length ? llm.queue.shift() : (llm.fallback || text('(no script)'));
       if (spec.destroy) { req.socket.destroy(); return; }
       res.writeHead(spec.status || 200, { 'content-type': 'application/json' });
@@ -142,11 +146,11 @@ function scanFor(dir, needles) {
 
     /* ---------------- dialog ---------------- */
 
-    await step('P01 the dialog offers seven providers (the built-in model first); the fields follow the provider (API version, sign-in choice, local discovery)', async () => {
+    await step('P01 the dialog offers eight providers (the built-in model first, then Foundry Local); the fields follow the provider (API version, sign-in choice, local discovery)', async () => {
       await openDialog();
       const opts = await ev("[...document.querySelectorAll('#modal-root .modal select')[0].options].map((o) => o.value + '|' + o.textContent)");
-      assert(opts.map((o) => o.split('|')[0]).join() === 'builtin,openai,azure,foundry,anthropic,gemini,local', opts.join(' ; '));
-      assert(/Yerleşik yerel model/.test(opts[0]) && /Microsoft Foundry/.test(opts[3]) && /…openai\.azure\.com/.test(opts[2]) && /Yerel model \(Foundry Local, Ollama/.test(opts[6]), opts.join(' ; '));
+      assert(opts.map((o) => o.split('|')[0]).join() === 'builtin,foundrylocal,openai,azure,foundry,anthropic,gemini,local', opts.join(' ; '));
+      assert(/Yerleşik yerel model/.test(opts[0]) && /^foundrylocal\|Foundry Local \(Microsoft/.test(opts[1]) && /Microsoft Foundry/.test(opts[4]) && /…openai\.azure\.com/.test(opts[3]) && /Yerel model \(Ollama, LM Studio/.test(opts[7]), opts.join(' ; '));
       const want = {
         builtin: ['Sağlayıcı', 'Model klasörü', 'Çalışma biçimi', 'Boşta kapat (dk)'],
         openai: ['Sağlayıcı', 'Uç nokta (URL)', 'Model', 'API anahtarı'],
@@ -346,15 +350,18 @@ function scanFor(dir, needles) {
       await closeModal();
     });
 
-    await step('P09 local problems are explained: server not reachable (with a settings shortcut), model without tool calling, <think> text hidden', async () => {
+    await step('P09 local problems are explained: server not reachable (with a settings shortcut), model without tool calling (the tools go into the prompt), <think> text hidden', async () => {
       llm.requests.length = 0;
       llm.fallback = { destroy: true }; // Chromium itself retries a reset connection, so a finite script would be eaten up
       const down = await run('bir şey yap', []);
       llm.fallback = null;
       assert(down.type === 'error' && /Yerel sunucuya ulaşılamadı/.test(down.text) && down.fix === true, J(down));
       assert(await ev("[...document.querySelectorAll('.ai-msg.err .btn')].some((b) => /Ayarları aç/.test(b.textContent))"), 'settings shortcut missing');
-      const noTools = await run('bir şey yap', [{ status: 400, json: { error: { message: 'registry.ollama.ai/library/gemma:2b does not support tools' } } }]);
-      assert(noTools.type === 'error' && noTools.code === 'NO_TOOLS' && /araç çağırmayı/.test(noTools.text) && noTools.fix === true, J(noTools));
+      // a model without tool calling (HTTP 400 for the tools): the tools go into the prompt instead and the same request is asked again - it is answered, not an error
+      llm.requests.length = 0;
+      const noTools = await run('bir şey yap', [{ status: 400, json: { error: { message: 'registry.ollama.ai/library/gemma:2b does not support tools' } } }, text('Değiştirecek bir şey bulamadım.')]);
+      assert(noTools.type === 'ai' && noTools.text === 'Değiştirecek bir şey bulamadım.', J(noTools));
+      assert(agentCalls().length === 1 && promptedCalls().length === 1 && !('authorization' in promptedCalls()[0].headers), 'requests: ' + J(llm.requests.map((r) => [r.url, !!(r.body && r.body.tools), isPrompted(r.body)])));
       const think = await run('merhaba', [text('<think>kullanıcı selam veriyor, kısa cevap vereyim</think>\n\nMerhaba! Ne yapmamı istersiniz?')]);
       assert(think.type === 'ai' && think.text === 'Merhaba! Ne yapmamı istersiniz?', J(think));
       near(await total(), 13, 0.001, 'nothing may change');

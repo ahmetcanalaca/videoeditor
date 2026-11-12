@@ -148,8 +148,8 @@ function sanitizeHistory(history) {
 }
 
 function aiErrorInfo(e) {
-  // errors of the built-in local model (LlmError: model missing, start-up failed, ...) are reported with their own codes as well
-  if (e && (e.name === 'AiError' || e.name === 'LlmError')) return { code: e.code, message: e.message, status: e.status || 0, detail: e.detail || '', retryAfterMs: e.retryAfterMs || null };
+  // errors of the built-in local model (LlmError: model missing, start-up failed, ...) and of Foundry Local (FoundryError) are reported with their own codes as well
+  if (e && (e.name === 'AiError' || e.name === 'LlmError' || e.name === 'FoundryError')) return { code: e.code, message: e.message, status: e.status || 0, detail: e.detail || '', retryAfterMs: e.retryAfterMs || null };
   return { code: 'INTERNAL', message: String((e && e.message) || e).slice(0, 300), status: 0, detail: '' };
 }
 

@@ -7,6 +7,7 @@ const { OriginTrust, FILES: TRUST_FILES } = require('./origin-trust');
 const { validateBaseUrl, createAiNet, LOCAL_HOSTS } = require('./net');
 const { normalizeEndpoint } = require('./endpoints');
 const { runAgent, aiErrorInfo, buildSystemPrompt, compactTools } = require('./agent');
+const { createFoundryProvider } = require('../foundry/local');
 const { EXPORT_ENUMS, MAX_PIECES, getToolDefs } = require('../../shared/agent-ops');
 const { AI_PROVIDERS, CU_ANALYZER_RE, CU_LOCATIONS, CU_DEFAULT_ANALYZER } = require('../settings');
 
@@ -16,10 +17,15 @@ const RUN_TIMEOUT_MS = 4 * 60 * 1000;
 // A model on this computer may have to be loaded into memory first and answers slowly on a CPU.
 const LOCAL_TEST_TIMEOUT_MS = 2 * 60 * 1000;
 const LOCAL_RUN_TIMEOUT_MS = 10 * 60 * 1000;
-// The built-in model also LOOKS at the video (minutes of work on a long video; the user can stop it any time).
+// The built-in model also LOOKS at the video (minutes of work on a long video; the user can stop it any time). Foundry Local does the same with a model that takes pictures,
+// and it may have to be started and loaded first.
 const BUILTIN_TEST_TIMEOUT_MS = 4 * 60 * 1000;
 const BUILTIN_RUN_TIMEOUT_MS = 45 * 60 * 1000;
 const BUILTIN_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const FOUNDRY_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+// find_in_video through Foundry Local: about this many pictures per search (at 5-6 s each on a laptop's GPU), and no more requests than that plan can need.
+const FOUNDRY_VISION_FRAMES = 60;
+const FOUNDRY_VISION_MAX_CALLS = 400;
 // Analysing the video with Content Understanding (upload + waiting for the service) is not counted against the request's own time limit; it has its own.
 const CU_ANALYSIS_TIMEOUT_MS = 60 * 60 * 1000;
 const CU_TEST_TIMEOUT_MS = 45 * 1000;
@@ -28,9 +34,9 @@ const CU_TEST_TIMEOUT_MS = 45 * 1000;
 const LOCATE_PROVIDERS = ['foundry', 'azure', 'openai'];
 
 // How the assistant signs in: 'key' (API key, required), 'entra' (Azure CLI token, Azure OpenAI / Foundry only), 'optional' (local server),
-// 'none' (the built-in model: a random key is made for every start of its private server, see llm/server.js).
+// 'none' (the built-in model: a random key is made for every start of its private server, see llm/server.js; Foundry Local: its server needs none).
 function credentialOf(ai) {
-  if (ai.provider === 'builtin') return 'none';
+  if (ai.provider === 'builtin' || ai.provider === 'foundrylocal') return 'none';
   if (ai.provider === 'local') return 'optional';
   if (ai.auth === 'entra' && (ai.provider === 'azure' || ai.provider === 'foundry')) return 'entra';
   return 'key';
@@ -80,7 +86,7 @@ function registerAiIpc(ctx) {
   // address (api.openai.com, api.anthropic.com, generativelanguage.googleapis.com). Everything else - an Azure / Foundry resource (anybody can create
   // one under any name), a company gateway, a typo - is a place the prompts and the key go to, so the user says yes once, in a native dialog.
   function endpointNeedsOk(provider, url) {
-    if (provider === 'builtin' || provider === 'local' || !url || !url.ok || url.local) return false;
+    if (provider === 'builtin' || provider === 'local' || provider === 'foundrylocal' || !url || !url.ok || url.local) return false;
     const own = P().DEFAULT_BASE_URLS[provider];
     try { if (own && new URL(own).origin === url.origin) return false; } catch (e) { /* no well-known address */ }
     return true;
@@ -106,15 +112,17 @@ function registerAiIpc(ctx) {
   function status() {
     const ai = ctx.getSettings().ai;
     const builtin = ai.provider === 'builtin' && !!ctx.llm;
+    // Foundry Local: its server has a dynamic port, which is found (see foundry/local.js) when a request is made - no address is kept in the settings
+    const foundry = ai.provider === 'foundrylocal' && !!ctx.foundry;
     const info = store().info();
-    // the built-in model has no URL and no key of the user's: its private server is addressed by the app itself
-    const url = builtin ? { ok: true, url: '', origin: '', local: true } : effectiveUrl(ai);
+    // the built-in model and Foundry Local have no URL and no key of the user's: the built-in model's private server is addressed by the app itself
+    const url = builtin || foundry ? { ok: true, url: '', origin: '', local: true } : effectiveUrl(ai);
     const credential = credentialOf(ai);
     // a model "on this computer" must really be on this computer: its endpoint is never allowed to point elsewhere
     const urlError = url.ok ? (ai.provider === 'local' && !url.local ? 'URL_NOT_LOCAL' : '') : url.code;
     // A key is only valid for the endpoint it was entered for: changing the endpoint without a new key must never send it elsewhere.
     // (The binding is part of the encrypted key record itself, see secrets.js.)
-    const keyMismatch = !builtin && info.hasKey && url.ok && store().origin() !== url.origin;
+    const keyMismatch = !builtin && !foundry && info.hasKey && url.ok && store().origin() !== url.origin;
     // the first thing that is still missing (drives the "assistant is off" banner)
     let needs = null;
     if (builtin) needs = ctx.llm.isInstalled() ? null : 'install';
@@ -122,6 +130,7 @@ function registerAiIpc(ctx) {
     else if (urlError) needs = 'url';
     else if (credential === 'key' && keyMismatch) needs = 'mismatch';
     else if (!ai.model) needs = 'model';
+    const flInfo = foundry && ai.model ? ctx.foundry.info(ai.model) : null;
     return Object.assign({}, info, {
       provider: ai.provider,
       auth: credential === 'entra' ? 'entra' : 'key',
@@ -136,8 +145,8 @@ function registerAiIpc(ctx) {
       needs,
       azCli: az().available(),
       ready: needs === null,
-      // the built-in model can look at the video (find_in_video)
-      vision: builtin && !!ctx.llm.model.vision,
+      // the built-in model can look at the video (find_in_video); so can a Foundry Local model that takes pictures (the catalogue says so: "Multimodal")
+      vision: builtin ? !!ctx.llm.model.vision : !!(flInfo && flInfo.vision),
       builtin: ctx.llm ? ctx.llm.status() : null,
       cu: cuStatus(ai, url, credential, keyMismatch, needs === null),
     });
@@ -155,6 +164,18 @@ function registerAiIpc(ctx) {
   // Runs fn(provider, endpoint) with the network window open for exactly this endpoint. The caller closes the window again (finally).
   // Entra ID: the Azure CLI supplies a short-lived token; a 401 is retried once with the other token audience (Foundry / Azure OpenAI).
   async function withProvider(st, signal, fn, opts) {
+    if (st.provider === 'foundrylocal') {
+      // Foundry Local: its server is looked for (and started when it is not running) now, because its port changes with every start; the request may only go to that
+      // address on this computer. The provider loads the model on demand and starts the server again if it crashes mid-way (see foundry/local.js).
+      const up = await ctx.foundry.ensureServer({ signal });
+      if (!up.ok) throw new (P().AiError)(up.code, 'Foundry Local is not available', { detail: up.detail || '' });
+      const build = (u) => {
+        allowedOrigin = new URL(u).origin;
+        return P().createProvider({ kind: 'local', baseUrl: u + '/v1', model: st.model, apiKey: '', fetch: net().fetch, flavor: 'foundry', timeoutMs: FOUNDRY_REQUEST_TIMEOUT_MS });
+      };
+      const provider = createFoundryProvider({ model: st.model, url: up.url, build, fl: ctx.foundry, onPhase: opts && opts.onPhase, signal });
+      return fn(provider, null);
+    }
     if (st.provider === 'builtin') {
       // the private server of the built-in model: started on demand, a random key for this start, loopback only
       return ctx.llm.use(async (ep) => {
@@ -240,7 +261,14 @@ function registerAiIpc(ctx) {
     return { segments, media, exportSettings: exp, playhead: Number(raw.playhead) || 0, selectedId: typeof raw.selectedId === 'string' ? raw.selectedId : null };
   }
 
-  ctx.handle('ai:status', () => status());
+  ctx.handle('ai:status', async () => { await ensureFoundryInfo(); return status(); });
+
+  // Foundry Local: whether the chosen model takes pictures is known from its catalogue (foundry/local.js listModels), which is read once per start of the app
+  async function ensureFoundryInfo() {
+    const ai = ctx.getSettings().ai;
+    if (ai.provider !== 'foundrylocal' || !ctx.foundry || !ai.model || ctx.foundry.info(ai.model)) return;
+    try { await ctx.foundry.listModels({}); } catch (e) { /* without it the status says: no pictures */ }
+  }
 
   ctx.handle('ai:save', async (e, req) => {
     const r = req && typeof req === 'object' ? req : {};
@@ -251,6 +279,14 @@ function registerAiIpc(ctx) {
       // (it is bound to that provider's address and never leaves the app anyway).
       if (!ctx.llm) return fail('BAD_PROVIDER');
       ctx.updateSettings({ ai: { provider, auth: 'key', baseUrl: '', model: '', apiVersion: '', shareNames: r.shareNames !== false } });
+      return { ok: true, keyCleared: false, status: status() };
+    }
+    if (provider === 'foundrylocal') {
+      // nothing to enter but the model: Foundry Local is found by the app (its port changes) and needs no key. A key stored for another provider stays as it is.
+      if (!ctx.foundry) return fail('BAD_PROVIDER');
+      const model = typeof r.model === 'string' ? r.model.trim() : '';
+      if (model && !ctx.foundry.validId(model)) return fail('FL_BAD_MODEL');
+      ctx.updateSettings({ ai: { provider, auth: 'key', baseUrl: '', model, apiVersion: '', shareNames: r.shareNames !== false, cu: { enabled: false } } });
       return { ok: true, keyCleared: false, status: status() };
     }
     const auth = r.auth === 'entra' && (provider === 'azure' || provider === 'foundry') ? 'entra' : 'key';
@@ -343,16 +379,19 @@ function registerAiIpc(ctx) {
     if (st.needs === 'mismatch') return fail('KEY_MISMATCH');
     if (active) return fail('BUSY');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), st.provider === 'builtin' ? BUILTIN_TEST_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_TEST_TIMEOUT_MS : TEST_TIMEOUT_MS));
+    const timer = setTimeout(() => controller.abort(), st.provider === 'builtin' || st.provider === 'foundrylocal' ? BUILTIN_TEST_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_TEST_TIMEOUT_MS : TEST_TIMEOUT_MS));
     active = { controller };
     try {
       return await withProvider(st, controller.signal, async (provider, ep) => {
         let models = [];
-        try {
-          models = await provider.listModels({ signal: controller.signal });
-        } catch (e) {
-          // not every endpoint lists models; a bad key or an unreachable server is reported either way
-          if (e && (e.code === 'AUTH' || e.code === 'FORBIDDEN' || e.code === 'NETWORK' || e.code === 'ABORTED')) throw e;
+        // (Foundry Local lists its whole catalogue at /v1/models: the models are chosen in its own panel)
+        if (st.provider !== 'foundrylocal') {
+          try {
+            models = await provider.listModels({ signal: controller.signal });
+          } catch (e) {
+            // not every endpoint lists models; a bad key or an unreachable server is reported either way
+            if (e && (e.code === 'AUTH' || e.code === 'FORBIDDEN' || e.code === 'NETWORK' || e.code === 'ABORTED')) throw e;
+          }
         }
         let modelOk = null;
         if (st.model) {
@@ -370,14 +409,12 @@ function registerAiIpc(ctx) {
     }
   });
 
-  // The agent's view of the video: find_in_video looks at pictures of the video through the built-in model (see perception/).
-  function makePerception(ep, session, userText, signal, runId) {
+  // The agent's view of the video: find_in_video looks at pictures of the video through a model that takes pictures (see perception/). vlm = the questions it asks.
+  function makePerception(vlm, session, userText, signal, runId, maxFrames) {
     const bins = ctx.getBins ? ctx.getBins() : {};
-    if (!bins || !bins.ffmpeg) return null;
+    if (!bins || !bins.ffmpeg || !vlm) return null;
     try {
       const { createPerception } = require('../perception');
-      const { createVlm } = require('../perception/vlm');
-      const vlm = createVlm({ boxFormat: ctx.llm.model.boxFormat, chat: (body, sig) => postChat(ep, body, sig || signal) });
       return createPerception({
         pieces: session.originalMap(),
         fileOf: (mediaId) => { const info = ctx.getMedia(mediaId); if (!info || !info.path) throw new Error('media is gone'); return info.path; },
@@ -386,12 +423,22 @@ function registerAiIpc(ctx) {
         vlm,
         userText,
         signal,
+        maxFrames,
         onProgress: (p) => ctx.send('ai:step', Object.assign({ runId, kind: 'search' }, p)),
         log: ctx.log,
       });
     } catch (e) {
       return null; // without eyes the assistant still edits by time
     }
+  }
+
+  // The questions find_in_video asks: the built-in model answers through its private server in its own box format; a Foundry Local model that takes pictures is asked
+  // through the chat route like a cloud model (the same prompts, boxes as fractions of the picture: measured IoU 0.90 on 12 photographs with Qwen3.5-4B).
+  function makeVlm(st, provider, ep, signal) {
+    if (st.provider === 'foundrylocal') return require('../perception/cloud-vlm').createCloudVlm({ provider, maxCalls: FOUNDRY_VISION_MAX_CALLS });
+    if (!ep) return null;
+    const { createVlm } = require('../perception/vlm');
+    return createVlm({ boxFormat: ctx.llm.model.boxFormat, chat: (body, sig) => postChat(ep, body, sig || signal) });
   }
 
   // Credential for Content Understanding: the key of the Foundry provider (header Ocp-Apim-Subscription-Key) or the Microsoft Entra token of the Azure CLI
@@ -489,6 +536,7 @@ function registerAiIpc(ctx) {
 
   ctx.handle('ai:run', async (e, req) => {
     const r = req && typeof req === 'object' ? req : {};
+    await ensureFoundryInfo();
     const st = status();
     if (!st.ready) return fail('NOT_CONFIGURED');
     if (active) return fail('BUSY');
@@ -497,7 +545,7 @@ function registerAiIpc(ctx) {
     const snapshot = snap;
     const controller = new AbortController();
     // the time limit of the request; it stands still while a video is being analysed (see makeAnalysis)
-    const budget = { left: st.provider === 'builtin' ? BUILTIN_RUN_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS), since: 0, timer: null };
+    const budget = { left: st.provider === 'builtin' || st.provider === 'foundrylocal' ? BUILTIN_RUN_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS), since: 0, timer: null };
     const arm = () => { budget.since = Date.now(); budget.timer = setTimeout(() => controller.abort(), Math.max(1000, budget.left)); };
     const disarm = () => { clearTimeout(budget.timer); budget.left -= Date.now() - budget.since; };
     arm();
@@ -514,12 +562,14 @@ function registerAiIpc(ctx) {
         shareNames: st.shareNames,
         signal: controller.signal,
         onStep: (step) => ctx.send('ai:step', Object.assign({ runId }, step)),
-        perceptionFactory: st.vision && ep ? (session) => makePerception(ep, session, String(r.prompt || ''), controller.signal, runId) : undefined,
+        perceptionFactory: st.vision && (ep || st.provider === 'foundrylocal')
+          ? (session) => makePerception(makeVlm(st, provider, ep, controller.signal), session, String(r.prompt || ''), controller.signal, runId, st.provider === 'foundrylocal' ? FOUNDRY_VISION_FRAMES : undefined)
+          : undefined,
         analysisFactory: st.cu && st.cu.ready ? (session) => makeAnalysis(st, session, controller.signal, runId, { pause: disarm, resume: arm }) : undefined,
         locatorFactory: st.cu && st.cu.ready && !st.vision && LOCATE_PROVIDERS.includes(st.provider)
           ? (session) => makeLocator(st, provider, session, String(r.prompt || ''), controller.signal, runId, { pause: disarm, resume: arm })
           : undefined,
-      }));
+      }), { onPhase: (phase) => ctx.send('ai:step', { runId, kind: 'phase', phase }) });
     } catch (err) {
       return { ok: false, error: aiErrorInfo(err) };
     } finally {
@@ -563,12 +613,24 @@ function registerAiIpc(ctx) {
     return true;
   });
 
-  // The assistant pane was opened: start the built-in model in the background so that the first request does not have to wait for it.
-  ctx.handle('ai:warm', () => {
+  // The assistant pane was opened: start the built-in model in the background so that the first request does not have to wait for it. Foundry Local: load the model if its
+  // server is already running (the pane does not start the server by itself).
+  let warming = false;
+  ctx.handle('ai:warm', async () => {
     const st = status();
-    if (st.provider !== 'builtin' || !st.ready || active) return { ok: true, started: false };
-    ctx.llm.warm();
-    return { ok: true, started: true };
+    if (!st.ready || active) return { ok: true, started: false };
+    if (st.provider === 'builtin') {
+      ctx.llm.warm();
+      return { ok: true, started: true };
+    }
+    if (st.provider === 'foundrylocal' && !warming) {
+      const s = await ctx.foundry.status();
+      if (!s.running) return { ok: true, started: false };
+      warming = true;
+      ctx.foundry.load(st.model).catch(() => {}).finally(() => { warming = false; });
+      return { ok: true, started: true };
+    }
+    return { ok: true, started: false };
   });
 
   // "Find local servers": plain GET requests to a few loopback ports, only when the user asks for it. Nothing is sent anywhere else.

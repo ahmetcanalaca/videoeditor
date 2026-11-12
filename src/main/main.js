@@ -16,6 +16,7 @@ const { assertLocalMediaPath } = require('./media-guard');
 const { createApprovals, samePath } = require('./approvals');
 const { registerAiIpc } = require('./ai/ipc');
 const { registerLlmIpc } = require('./llm/ipc');
+const { registerFoundryIpc } = require('./foundry/ipc');
 const { resolveRuntime, EXE: LLAMA_EXE } = require('./llm/runtime');
 
 app.setName('VideoEditor');
@@ -56,10 +57,12 @@ if (process.env.VE_TEST_MODE !== '1') {
   }
 }
 
-// No background networking, no component updates, no crash/usage reporting. The only network traffic the app can ever
+// No background networking, no component updates, no crash/usage reporting. The only network traffic THIS PROGRAM can ever
 // produce is (1) the optional AI assistant talking to the endpoint the user configured (see ai/net.js), (2) the one-time download of the
-// built-in model, started by a click and limited to the model repository (see llm/ipc.js) and (3) the loopback connection to the private
-// llama-server of the built-in model. The default session below stays completely offline.
+// built-in model, started by a click and limited to the model repository (see llm/ipc.js) and (3) the loopback connections to the private
+// llama-server of the built-in model and to Foundry Local's server (foundry/local.js). The default session below stays completely offline.
+// Foundry Local itself is a separate Microsoft program that the person installed: when this app asks it to list its models or to start, IT may fetch hardware
+// components (execution providers) from Microsoft and the chip vendors, and it downloads a model when the person presses "Download". That traffic is not this app's.
 app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-component-update');
 // CalculateNativeWinOcclusion: a covered window must keep playing its preview (no "hidden page" throttling).
@@ -147,6 +150,7 @@ let rendererReady = false;
 let lastExportPath = '';
 let aiIpc = null;
 let llmIpc = null;
+let flIpc = null;
 
 // ---- what the USER chose, as opposed to what a script in the page asks for ----
 // The page is the least trusted part of the app: whatever it passes to main as a path is only honoured when it is one of these.
@@ -878,6 +882,37 @@ function registerIpc() {
     return res.response === 0;
   }
 
+  // Foundry Local (Microsoft's runtime for models on this computer): the panel in the assistant settings (installed? running? models, download, load) and the three official
+  // addresses where a person gets it. The assistant itself reaches it through ai/ipc.js. Tests replace the program and its folder (VE_TEST_FL_HOME / VE_TEST_FL_CLI_JS).
+  function foundryTestClient() {
+    if (process.env.VE_TEST_MODE !== '1' || !process.env.VE_TEST_FL_HOME) return undefined;
+    const fl = require('./foundry/local');
+    const script = process.env.VE_TEST_FL_CLI_JS || '';
+    return fl.createFoundryLocal({
+      env: Object.assign({}, process.env, { USERPROFILE: process.env.VE_TEST_FL_HOME }),
+      cliPath: script ? process.execPath : '',
+      run: script ? (cli, args, o) => fl.defaultRun(process.execPath, [script].concat(args), Object.assign({}, o, { env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }) })) : undefined,
+      pollMs: 50,
+      freeMemMb: () => 16000,
+      // the fake servers of the tests listen in the test runner, under a made-up process id: only the process id in /status is checked there (tests/foundry-local.test.js covers the owner of the port)
+      listenersOn: async () => null,
+    });
+  }
+  async function openOfficialLink(url) {
+    if (process.env.VE_TEST_MODE === '1') {
+      if (process.env.VE_TEST_OPEN_LOG) { try { fs.appendFileSync(process.env.VE_TEST_OPEN_LOG, url + '\n'); } catch (err) { /* ignore */ } }
+      return;
+    }
+    await shell.openExternal(url);
+  }
+  flIpc = registerFoundryIpc({
+    handle,
+    send,
+    openExternal: openOfficialLink,
+    client: foundryTestClient(),
+    log: (m) => { if (process.env.VE_LLM_LOG) console.log('[foundry] ' + m); },
+  });
+
   aiIpc = registerAiIpc({
     handle,
     getSettings: () => settings.get(),
@@ -890,6 +925,7 @@ function registerIpc() {
     safeStorage,
     session,
     llm: llmIpc,
+    foundry: flIpc.client,
     getBins: () => bins,
     procs,
     confirmEndpoint,
@@ -1009,6 +1045,7 @@ if (!gotLock) {
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => {
     if (aiIpc) aiIpc.abortAll();
+    if (flIpc) flIpc.abortAll();
     if (llmIpc) { llmIpc.abortAll(); llmIpc.stopServer().catch(() => {}); }
     resetMedia();
     for (const job of exportJobs.values()) job.cancel();

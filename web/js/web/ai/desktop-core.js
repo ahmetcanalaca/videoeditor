@@ -2,8 +2,9 @@
 // Sources (first 16 hex digits of the SHA-256 of each file):
 //   6c01990ca33749b0  src/shared/model.js
 //   9dbc16488faa33ad  src/shared/agent-ops.js
-//   71c8844fa1ed8fd5  src/main/ai/agent.js
-//   dbd70b398a0bfcbc  src/main/ai/providers.js
+//   538fa8a23c8dc22e  src/main/ai/agent.js
+//   a8ecac4a93fe7c6a  src/main/ai/providers.js
+//   5a165e39872615f1  src/main/ai/prompted-tools.js
 //   991ed49860198d1f  src/main/ai/net.js
 //   3ecb19242af3ae59  src/main/ai/endpoints.js
 //   990436c28aaf7ba4  src/main/ai/content-understanding.js
@@ -16,7 +17,6 @@
 //   5b73dd246b9c06e1  src/main/perception/cloud-vlm.js
 //   65fbbba68d211935  src/main/perception/locate.js
 //   2f08a5c9ae71567e  src/main/perception/index.js
-//   8d6a1899e61ece3b  src/main/llm/catalog.js
 // The CommonJS modules of the desktop app, running unchanged in the page: a tiny registry gives each one its own `module` and `require`.
 import { shims } from './node-shims.js';
 
@@ -1354,8 +1354,8 @@ function sanitizeHistory(history) {
 }
 
 function aiErrorInfo(e) {
-  // errors of the built-in local model (LlmError: model missing, start-up failed, ...) are reported with their own codes as well
-  if (e && (e.name === 'AiError' || e.name === 'LlmError')) return { code: e.code, message: e.message, status: e.status || 0, detail: e.detail || '', retryAfterMs: e.retryAfterMs || null };
+  // errors of the built-in local model (LlmError: model missing, start-up failed, ...) and of Foundry Local (FoundryError) are reported with their own codes as well
+  if (e && (e.name === 'AiError' || e.name === 'LlmError' || e.name === 'FoundryError')) return { code: e.code, message: e.message, status: e.status || 0, detail: e.detail || '', retryAfterMs: e.retryAfterMs || null };
   return { code: 'INTERNAL', message: String((e && e.message) || e).slice(0, 300), status: 0, detail: '' };
 }
 
@@ -1568,6 +1568,8 @@ module.exports = { runAgent, buildSystemPrompt, compactTools, sanitizeHistory, a
  * Key hygiene: the key only ever travels in the auth header; it is never part of a URL, a thrown message, `detail` or `raw`.
  */
 
+const promptedTools = require('./prompted-tools');
+
 const PROVIDER_KINDS = ['openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
 const DEFAULT_BASE_URLS = {
   openai: 'https://api.openai.com/v1', azure: '', foundry: '', anthropic: 'https://api.anthropic.com', gemini: 'https://generativelanguage.googleapis.com',
@@ -1577,6 +1579,8 @@ const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const MAX_KEY = 16384; // Microsoft Entra access tokens are long; user-typed keys are limited to 4096 by the key store
 // Wording of "this model cannot do tool calling" across Ollama, LM Studio, Azure/Foundry and OpenAI-compatible gateways.
 const NO_TOOLS_RE = /(?:does(?:n't| not) support|not support(?:ed)?|unsupported|no support for)[^.\n]{0,60}\b(?:tools?|function[ _-]?calling|functions)\b|\b(?:tools?|function[ _-]?calling)\b[^.\n]{0,60}(?:not (?:supported|available|enabled)|unsupported)/i;
+// Foundry Local 0.14 answers HTTP 500 (not 4xx) for every `tools` request to its Qwen3.5 models: "structured tool calling requires model-published opening and closing tool markers".
+const FOUNDRY_NO_TOOLS_RE = /structured tool calling requires\b[^.\n]{0,80}\btool markers\b/i;
 const AZURE_API_VERSION = '2024-10-21';
 const ANTHROPIC_VERSION = '2023-06-01';
 
@@ -1647,7 +1651,8 @@ function httpError(cfg, res, text) {
   const codes = [isObj(err) && err.code, isObj(err) && err.type].filter((x) => typeof x === 'string');
   const quota = status === 402 || codes.some((c) => /insufficient_quota|billing_hard_limit_reached|billing_not_active/i.test(c)) || /credit balance is too low/i.test(String(message));
   if (quota) return new AiError('QUOTA', 'Quota or credit exhausted', extra);
-  if ((status === 400 || status === 422 || status === 501) && NO_TOOLS_RE.test(String(message || text.slice(0, 500)))) return new AiError('NO_TOOLS', 'The model does not support tool calling', extra);
+  const said = String(message || text.slice(0, 500));
+  if (((status === 400 || status === 422 || status === 501) && NO_TOOLS_RE.test(said)) || (status === 500 && FOUNDRY_NO_TOOLS_RE.test(said))) return new AiError('NO_TOOLS', 'The model does not support tool calling', extra);
   if (status === 401) return new AiError('AUTH', 'Authentication failed', extra);
   if (status === 403) return new AiError('FORBIDDEN', 'Access denied', extra);
   if (status === 404) return new AiError('NOT_FOUND', 'Model or endpoint not found', extra);
@@ -1699,6 +1704,10 @@ function validateConfig(o) {
     // a model running on this computer may need a long time for the first answer (loading, CPU only)
     timeoutMs: Number(o.timeoutMs) > 0 ? Number(o.timeoutMs) : (o.kind === 'local' ? 180000 : 90000),
     maxRetries: Number.isInteger(o.maxRetries) && o.maxRetries >= 0 ? o.maxRetries : 2,
+    // 'foundry': the server is Foundry Local (its reasoning models are told not to think aloud, see openaiBody)
+    flavor: o.kind === 'local' && o.flavor === 'foundry' ? 'foundry' : '',
+    // what a local server that cannot do tool calling gets instead: the tools are described in the prompt (see prompted-tools.js). 'auto' = only after the server refused tools.
+    promptedTools: o.kind === 'local' ? (['auto', 'always', 'never'].includes(o.promptedTools) ? o.promptedTools : 'auto') : 'never',
   };
 }
 
@@ -1839,6 +1848,8 @@ function openaiBody(cfg, req, withModel) {
   // Cloud models keep their defaults (reasoning models reject sampling parameters). A small local model is steadier at a low
   // temperature and must not ramble until its context is full, so these two are only sent to a local server.
   if (cfg.kind === 'local') { body.temperature = 0.2; body.max_tokens = 1024; }
+  // Foundry Local: Qwen3.5 would write its thoughts into the answer (80+ tokens, seconds on an integrated GPU); this switches thinking off.
+  if (cfg.flavor === 'foundry') body.reasoning_effort = 'none';
   return body;
 }
 
@@ -2085,17 +2096,41 @@ const GEMINI = {
 
 const ADAPTERS = { openai: OPENAI, azure: AZURE, foundry: FOUNDRY, anthropic: ANTHROPIC, gemini: GEMINI, local: OPENAI };
 
+// Local servers that refused tools (address|model): they get the tools in the prompt from then on, without asking the server again.
+const promptedMemo = new Set();
+const MAX_MEMO = 64;
+
 function createProvider(opts) {
   const cfg = validateConfig(opts);
   const adapter = ADAPTERS[cfg.kind];
+  const memoKey = cfg.baseUrl + '|' + cfg.model;
+
+  async function promptedChat(base, signal) {
+    const spec = adapter.chat(cfg, { system: promptedTools.systemWithTools(base.system, base.tools), messages: promptedTools.toPromptedMessages(base.messages), tools: [] });
+    const res = adapter.parse(cfg, await send(cfg, spec, signal));
+    const parsed = promptedTools.parseToolReply(res.text, base.tools);
+    return { text: parsed.text, toolCalls: parsed.toolCalls, raw: { role: 'assistant', content: res.text }, usage: res.usage, stopReason: parsed.toolCalls.length ? 'tool_calls' : res.stopReason };
+  }
+
   return {
     kind: cfg.kind,
     model: cfg.model,
+    // true once this model has been served with the tools described in the prompt (the server could not do tool calling itself)
+    toolsEmulated: () => promptedMemo.has(memoKey),
     async chat(req) {
       const r = req || {};
-      const spec = adapter.chat(cfg, { system: r.system || '', messages: Array.isArray(r.messages) ? r.messages : [], tools: r.tools });
-      const json = await send(cfg, spec, r.signal);
-      return adapter.parse(cfg, json);
+      const base = { system: r.system || '', messages: Array.isArray(r.messages) ? r.messages : [], tools: r.tools };
+      const wantsTools = toolList(r.tools).length > 0 && cfg.promptedTools !== 'never';
+      if (wantsTools && (cfg.promptedTools === 'always' || promptedMemo.has(memoKey))) return promptedChat(base, r.signal);
+      try {
+        const json = await send(cfg, adapter.chat(cfg, base), r.signal);
+        return adapter.parse(cfg, json);
+      } catch (e) {
+        if (!(wantsTools && e instanceof AiError && e.code === 'NO_TOOLS')) throw e;
+        if (promptedMemo.size >= MAX_MEMO) promptedMemo.clear();
+        promptedMemo.add(memoKey);
+        return promptedChat(base, r.signal);
+      }
     },
     async listModels(req) {
       if (!adapter.models) return [];
@@ -2106,6 +2141,267 @@ function createProvider(opts) {
 }
 
 module.exports = { createProvider, AiError, PROVIDER_KINDS, DEFAULT_BASE_URLS, toGeminiSchema };
+},
+'src/main/ai/prompted-tools': function (module, exports, require) {
+'use strict';
+/*
+ * Tool calling by prompt, for a model whose SERVER cannot do it itself.
+ *
+ * Foundry Local 0.14 answers HTTP 500 ("structured tool calling requires model-published opening and closing tool markers") to every request with `tools` for its
+ * Qwen3.5 models, although the models are listed as tool-capable, and Ollama answers HTTP 400 for models without a tool template. Instead of giving up, the provider
+ * adapter (providers.js, kind "local") then describes the tools in the system prompt, asks the model to reply with ONE JSON object, and reads the reply back into the
+ * ordinary ChatResult shape. The agent loop does not notice: it still sees toolCalls and sends tool results.
+ *
+ * Everything the model writes is untrusted text: the reply is cut to a fixed size, only JSON that parses is used, the number of calls is limited, and every call
+ * still goes through the same validation as a native call (agent-ops.js decides what a tool may do).
+ */
+
+const MAX_REPLY_CHARS = 60000;
+const MAX_CANDIDATES = 24;
+const MAX_CALLS = 16;
+const MAX_RESULT_CHARS = 4000;
+const MAX_NAME = 64;
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/* ------------------------------------------------------------------ the prompt */
+
+function typeText(schema, depth) {
+  if (!isObj(schema)) return 'any';
+  if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum.slice(0, 12).map((v) => JSON.stringify(v)).join('|');
+  switch (schema.type) {
+    case 'number':
+    case 'integer': {
+      const lo = schema.minimum;
+      const hi = schema.maximum;
+      return 'number' + (typeof lo === 'number' || typeof hi === 'number' ? ' (' + (typeof lo === 'number' ? lo : '') + '..' + (typeof hi === 'number' ? hi : '') + ')' : '');
+    }
+    case 'string': return 'string';
+    case 'boolean': return 'boolean';
+    case 'array': return '[' + typeText(schema.items, depth + 1) + ', …]';
+    case 'object': return objectText(schema, depth + 1);
+    default: return 'any';
+  }
+}
+
+function objectText(schema, depth) {
+  if (depth > 3 || !isObj(schema.properties)) return '{…}';
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  return '{' + Object.keys(schema.properties).slice(0, 24).map((k) => k + (required.has(k) ? '' : '?') + ': ' + typeText(schema.properties[k], depth)).join(', ') + '}';
+}
+
+const oneLine = (s, max) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, max);
+
+// "- set_zoom {start?: number, mode: "in"|"out"|"hold", …} - what it does (key: what the argument means; …)". An argument that means the same in several tools (start, end,
+// found, …) is explained once under COMMON ARGUMENTS: the prompt is processed again for every step, and on a laptop's GPU every 100 tokens count.
+function describeTools(tools) {
+  const list = (Array.isArray(tools) ? tools : []).filter((t) => t && typeof t.name === 'string' && NAME_RE.test(t.name));
+  const docsOf = (t) => {
+    const props = t.parameters && isObj(t.parameters.properties) ? t.parameters.properties : {};
+    const out = [];
+    for (const k of Object.keys(props).slice(0, 24)) { const d = props[k] && props[k].description; if (d) out.push([k, oneLine(d, 90)]); }
+    return out;
+  };
+  const seen = new Map();
+  for (const t of list) for (const [k, d] of docsOf(t)) { const key = k + '\u0000' + d; seen.set(key, (seen.get(key) || 0) + 1); }
+  const common = new Map();
+  for (const [key, n] of seen) if (n >= 3) { const [k, d] = key.split('\u0000'); if (!common.has(k)) common.set(k, d); }
+  const lines = [];
+  for (const t of list) {
+    const params = isObj(t.parameters) ? t.parameters : { type: 'object', properties: {} };
+    const docs = docsOf(t).filter(([k, d]) => common.get(k) !== d).map(([k, d]) => k + ': ' + d);
+    lines.push('- ' + t.name + ' ' + objectText(params, 0) + ' - ' + oneLine(t.description, 260) + (docs.length ? ' (' + docs.join('; ') + ')' : ''));
+  }
+  if (common.size) lines.push('COMMON ARGUMENTS (the same in every tool that has them): ' + Array.from(common, ([k, d]) => k + ': ' + d).join('; '));
+  return lines.join('\n');
+}
+
+const PROTOCOL = [
+  'HOW TO CALL TOOLS: to call tools, reply with ONLY one JSON object, no other text and no markdown, in exactly this form:',
+  '{"tool_calls":[{"name":"TOOL_NAME","arguments":{"argument":"value"}}]}',
+  'Use only the tool names and argument names listed below, with the listed types, and write only the arguments the request needs (leave the others out). Put several calls in the list to run them one after the other.',
+  'The results come back in the next message ("TOOL RESULTS"); then call more tools, or answer. When you need no tool, or when everything is done, reply in plain words (no JSON).',
+].join('\n');
+
+function systemWithTools(system, tools) {
+  const list = describeTools(tools);
+  if (!list) return String(system || '');
+  return String(system || '') + '\n\n' + PROTOCOL + '\n\nTOOLS:\n' + list;
+}
+
+/* ------------------------------------------------------------------ the conversation */
+
+function resultValue(content) {
+  const s = String(content == null ? '' : content);
+  try { return JSON.parse(s); } catch (e) { return s.slice(0, MAX_RESULT_CHARS); }
+}
+
+function callText(calls) {
+  return JSON.stringify({ tool_calls: calls.map((c) => ({ name: c.name, arguments: isObj(c.args) ? c.args : {} })) });
+}
+
+// ChatMsg[] (providers.js) without the tool role: what the model "said" with tools becomes the JSON it was asked to write, the results become a user message.
+function toPromptedMessages(messages) {
+  const out = [];
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (!m) continue;
+    if (m.role === 'user') {
+      out.push({ role: 'user', content: m.content });
+    } else if (m.role === 'assistant') {
+      const calls = Array.isArray(m.toolCalls) ? m.toolCalls.filter((c) => c && typeof c.name === 'string') : [];
+      out.push({ role: 'assistant', content: calls.length ? callText(calls) : String(m.content == null ? '' : m.content) });
+    } else if (m.role === 'tool') {
+      const results = (Array.isArray(m.results) ? m.results : []).map((r) => {
+        const entry = { tool: String(r && r.name || ''), result: resultValue(r && r.content) };
+        if (r && r.isError) entry.error = true;
+        return entry;
+      });
+      let body = JSON.stringify(results);
+      if (body.length > MAX_RESULT_CHARS * 2) body = body.slice(0, MAX_RESULT_CHARS * 2) + '…';
+      out.push({ role: 'user', content: 'TOOL RESULTS (in the order of your calls):\n' + body + '\n\nNow call more tools if the request needs them, or answer the user in plain words.' });
+    }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ the reply */
+
+// A model that thinks aloud first ("Thinking Process: …", or <think>…</think>) is read from its answer on.
+function stripThinking(text) {
+  let s = String(text == null ? '' : text).replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, ' ');
+  if (/^\s*Thinking Process:/i.test(s)) {
+    const at = s.lastIndexOf('\n\n\n');
+    if (at >= 0) s = s.slice(at);
+  }
+  return s.trim();
+}
+
+// The balanced {...} and [...] spans of the text that are valid JSON (the ones that are not are skipped, scanning goes on after them).
+function jsonCandidates(s) {
+  const out = [];
+  let i = 0;
+  let tries = 0;
+  while (i < s.length && tries < MAX_CANDIDATES) {
+    const c = s[i];
+    if (c !== '{' && c !== '[') { i++; continue; }
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let end = -1;
+    for (let j = i; j < s.length; j++) {
+      const ch = s[j];
+      if (inStr) {
+        if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{' || ch === '[') depth++;
+      else if (ch === '}' || ch === ']') { depth--; if (depth === 0) { end = j; break; } }
+    }
+    tries++;
+    if (end < 0) { i++; continue; }
+    let value;
+    try { value = JSON.parse(s.slice(i, end + 1)); } catch (e) { i++; continue; }
+    out.push({ value, from: i, to: end + 1 });
+    i = end + 1;
+  }
+  return out;
+}
+
+const ARG_KEYS = ['arguments', 'args', 'parameters', 'input'];
+
+function argsOf(holder) {
+  const key = ARG_KEYS.find((k) => holder[k] !== undefined);
+  const raw = key ? holder[key] : undefined;
+  if (raw === undefined || raw === null || raw === '') return { args: {} };
+  if (isObj(raw)) return { args: raw };
+  if (typeof raw === 'string') {
+    try {
+      const v = JSON.parse(raw);
+      if (isObj(v)) return { args: v };
+    } catch (e) { /* below */ }
+  }
+  return { args: null, argsError: 'Arguments must be a JSON object' };
+}
+
+// One entry of a "tool_calls" list, or a call written on its own, in the shapes small models use: {name, arguments}, {tool, args}, {function: {name, arguments}}.
+function callOf(item, names) {
+  if (!isObj(item)) return null;
+  const holder = isObj(item.function) ? item.function : item;
+  const nameOf = (o) => (typeof o.name === 'string' ? o.name : (typeof o.tool === 'string' ? o.tool : (typeof o.tool_name === 'string' ? o.tool_name : '')));
+  const name = nameOf(holder) || nameOf(item);
+  if (!name || name.length > MAX_NAME || !NAME_RE.test(name)) return null;
+  const argHolder = ARG_KEYS.some((k) => holder[k] !== undefined) ? holder : item;
+  const hasArgs = ARG_KEYS.some((k) => argHolder[k] !== undefined);
+  // {"name": "John"} in a piece of prose is not a call: it needs arguments, or to be a tool that exists
+  if (!hasArgs && !names.has(name)) return null;
+  const a = argsOf(argHolder);
+  return a.argsError ? { name, args: null, argsError: a.argsError } : { name, args: a.args };
+}
+
+function callsOf(value, names) {
+  const list = [];
+  const push = (v) => { const c = callOf(v, names); if (c) list.push(c); };
+  if (Array.isArray(value)) value.slice(0, MAX_CALLS).forEach(push);
+  else if (isObj(value) && Array.isArray(value.tool_calls)) value.tool_calls.slice(0, MAX_CALLS).forEach(push);
+  else if (isObj(value) && Array.isArray(value.calls)) value.calls.slice(0, MAX_CALLS).forEach(push);
+  else if (isObj(value)) push(value);
+  return list;
+}
+
+// Qwen's own format, which the model sometimes writes although it was asked for JSON: <tool_call><function=NAME><parameter=KEY>VALUE</parameter>…</function></tool_call>
+function xmlCalls(s) {
+  const out = [];
+  const re = /<function=([A-Za-z0-9_.-]{1,64})>([\s\S]*?)<\/function>/g;
+  let m;
+  while ((m = re.exec(s)) !== null && out.length < MAX_CALLS) {
+    const args = {};
+    const pr = /<parameter=([A-Za-z0-9_.-]{1,64})>([\s\S]*?)<\/parameter>/g;
+    let p;
+    while ((p = pr.exec(m[2])) !== null) {
+      const raw = p[2].trim();
+      let v = raw;
+      try { v = JSON.parse(raw); } catch (e) { /* a plain string */ }
+      args[p[1]] = v;
+    }
+    out.push({ call: { name: m[1], args }, from: m.index, to: m.index + m[0].length });
+  }
+  return out;
+}
+
+// parseToolReply(text, tools) -> { text, toolCalls: [{ id, name, args|null, argsError? }] }
+function parseToolReply(text, tools) {
+  const names = new Set((Array.isArray(tools) ? tools : []).map((t) => t && t.name).filter(Boolean));
+  const s = stripThinking(String(text == null ? '' : text).slice(0, MAX_REPLY_CHARS));
+  const spans = [];
+  const calls = [];
+  for (const c of jsonCandidates(s)) {
+    const found = callsOf(c.value, names);
+    if (found.length) { calls.push(...found); spans.push([c.from, c.to]); }
+  }
+  for (const x of xmlCalls(s)) { calls.push(x.call); spans.push([x.from, x.to]); }
+  let rest = s;
+  if (spans.length) {
+    spans.sort((a, b) => b[0] - a[0]);
+    for (const [from, to] of spans) rest = rest.slice(0, from) + ' ' + rest.slice(to);
+  }
+  // (the trailing blanks of a line are cut by a linear pass: a regex such as /[ \t]+\n/ is quadratic on a long run of blanks that no newline follows)
+  rest = rest.replace(/<\/?tool_call>/gi, ' ').replace(/```[a-z]*\s*```/gi, ' ').split('\n').map((l) => l.trimEnd()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (!calls.length) {
+    // it was an attempt that did not parse (cut short, a missing bracket): the model is told so by the agent and can write it again
+    const attempt = /"tool_calls"\s*:|"name"\s*:\s*"([A-Za-z0-9_.-]{1,64})"\s*,\s*"arguments"/.exec(s);
+    if (attempt && /[{[]/.test(s.slice(0, attempt.index + 1))) {
+      const named = /"name"\s*:\s*"([A-Za-z0-9_.-]{1,64})"/.exec(s);
+      return { text: '', toolCalls: [{ id: 'call_1', name: named ? named[1] : 'unknown', args: null, argsError: 'The reply was not valid JSON' }] };
+    }
+    return { text: s, toolCalls: [] };
+  }
+  const toolCalls = calls.slice(0, MAX_CALLS).map((c, i) => Object.assign({ id: 'call_' + (i + 1) }, c));
+  return { text: rest, toolCalls };
+}
+
+module.exports = { describeTools, systemWithTools, toPromptedMessages, parseToolReply, stripThinking, PROTOCOL, MAX_CALLS };
 },
 'src/main/ai/net': function (module, exports, require) {
 'use strict';
@@ -4126,75 +4422,6 @@ function createPerception(opts) {
 
 module.exports = { createPerception, MAX_FINDS_PER_REQUEST };
 },
-'src/main/llm/catalog': function (module, exports, require) {
-'use strict';
-// The models the built-in local assistant can use. Everything that makes a download trustworthy is pinned here:
-//   - the exact repository REVISION (a commit, not "main"), so the bytes behind a URL never change,
-//   - the size and the SHA-256 of every file (the SHA-256 values are the LFS object ids published by the model repository,
-//     and were also checked against copies that had been downloaded and measured earlier),
-//   - the hosts a download may talk to.
-// A file is used only if its SHA-256 matches; there is no "trust on first use".
-
-const HF = 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/';
-
-const CATALOG = Object.freeze([
-  Object.freeze({
-    id: 'qwen3.5-4b',
-    name: 'Qwen3.5-4B (Q4_K_M)',
-    family: 'qwen3.5',
-    // how this model writes bounding boxes: [x1,y1,x2,y2] on a 0..1000 grid (see perception/boxes.js)
-    boxFormat: 'k1000',
-    vision: true,
-    license: 'Apache-2.0',
-    licenseUrl: 'https://huggingface.co/Qwen/Qwen3.5-4B',
-    source: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF',
-    // memory the model + its cache needs while it is loaded (the app warns below this much free RAM)
-    needsRamGb: 6,
-    files: Object.freeze([
-      Object.freeze({
-        role: 'model',
-        name: 'Qwen3.5-4B-Q4_K_M.gguf',
-        aliases: [],
-        url: HF + 'Qwen3.5-4B-Q4_K_M.gguf',
-        size: 2740937888,
-        sha256: '00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4',
-      }),
-      Object.freeze({
-        role: 'mmproj',
-        name: 'Qwen3.5-4B-mmproj-F16.gguf',
-        aliases: ['mmproj-F16.gguf'],
-        url: HF + 'mmproj-F16.gguf',
-        size: 672423616,
-        sha256: 'cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864',
-      }),
-    ]),
-  }),
-]);
-
-const DEFAULT_MODEL_ID = 'qwen3.5-4b';
-
-// A download may only talk to these hosts (and subdomains of them): the model repository and its content delivery network.
-const DOWNLOAD_HOSTS = Object.freeze(['huggingface.co', 'hf.co']);
-
-function isAllowedDownloadUrl(raw, extraHosts) {
-  let u;
-  try { u = new URL(String(raw)); } catch (e) { return false; }
-  const extra = extraHosts || [];
-  // plain http only for the local servers that tests pass in as extra hosts
-  const localTest = u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost') && extra.includes(u.hostname);
-  if (u.protocol !== 'https:' && !localTest) return false;
-  if (u.username || u.password) return false;
-  return DOWNLOAD_HOSTS.concat(extra).some((h) => u.hostname === h || u.hostname.endsWith('.' + h));
-}
-
-function findModel(id, catalog) {
-  return (catalog || CATALOG).find((m) => m.id === id) || null;
-}
-
-const totalBytes = (m) => m.files.reduce((s, f) => s + f.size, 0);
-
-module.exports = { CATALOG, DEFAULT_MODEL_ID, DOWNLOAD_HOSTS, isAllowedDownloadUrl, findModel, totalBytes };
-},
 };
 
 const cache = Object.create(null);
@@ -4236,4 +4463,3 @@ export const perceptionVlm = load('src/main/perception/vlm');
 export const perceptionCloudVlm = load('src/main/perception/cloud-vlm');
 export const perceptionLocate = load('src/main/perception/locate');
 export const perception = load('src/main/perception/index');
-export const llmCatalog = load('src/main/llm/catalog');

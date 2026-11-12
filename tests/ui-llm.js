@@ -162,7 +162,7 @@ function startRepo(files) {
           dir: q('[data-llm="dir"]').value, backend: q('[data-llm="backend"]').value, idle: q('[data-llm="idle"]').value,
           share: !q('label.check').hidden, text: m.textContent };
       })()`);
-      assert(f.provider === 'builtin' && f.first === 'builtin' && f.count === 7, JSON.stringify({ p: f.provider, f: f.first, c: f.count }));
+      assert(f.provider === 'builtin' && f.first === 'builtin' && f.count === 8, JSON.stringify({ p: f.provider, f: f.first, c: f.count }));
       assert(f.visibleCells === 2 && f.keyHidden, 'only the provider row should be left in the form grid, visible cells: ' + f.visibleCells);
       assert(f.state === 'Kurulu değil' && f.install && /^İndir ve kur \(\d+ MB\)$/.test(f.installLabel), f.state + ' / ' + f.installLabel);
       assert(!f.verify && !f.cancel && !f.remove, 'buttons that do not apply must be hidden');

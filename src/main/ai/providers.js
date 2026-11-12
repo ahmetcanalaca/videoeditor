@@ -25,6 +25,8 @@
  * Key hygiene: the key only ever travels in the auth header; it is never part of a URL, a thrown message, `detail` or `raw`.
  */
 
+const promptedTools = require('./prompted-tools');
+
 const PROVIDER_KINDS = ['openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
 const DEFAULT_BASE_URLS = {
   openai: 'https://api.openai.com/v1', azure: '', foundry: '', anthropic: 'https://api.anthropic.com', gemini: 'https://generativelanguage.googleapis.com',
@@ -34,6 +36,8 @@ const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const MAX_KEY = 16384; // Microsoft Entra access tokens are long; user-typed keys are limited to 4096 by the key store
 // Wording of "this model cannot do tool calling" across Ollama, LM Studio, Azure/Foundry and OpenAI-compatible gateways.
 const NO_TOOLS_RE = /(?:does(?:n't| not) support|not support(?:ed)?|unsupported|no support for)[^.\n]{0,60}\b(?:tools?|function[ _-]?calling|functions)\b|\b(?:tools?|function[ _-]?calling)\b[^.\n]{0,60}(?:not (?:supported|available|enabled)|unsupported)/i;
+// Foundry Local 0.14 answers HTTP 500 (not 4xx) for every `tools` request to its Qwen3.5 models: "structured tool calling requires model-published opening and closing tool markers".
+const FOUNDRY_NO_TOOLS_RE = /structured tool calling requires\b[^.\n]{0,80}\btool markers\b/i;
 const AZURE_API_VERSION = '2024-10-21';
 const ANTHROPIC_VERSION = '2023-06-01';
 
@@ -104,7 +108,8 @@ function httpError(cfg, res, text) {
   const codes = [isObj(err) && err.code, isObj(err) && err.type].filter((x) => typeof x === 'string');
   const quota = status === 402 || codes.some((c) => /insufficient_quota|billing_hard_limit_reached|billing_not_active/i.test(c)) || /credit balance is too low/i.test(String(message));
   if (quota) return new AiError('QUOTA', 'Quota or credit exhausted', extra);
-  if ((status === 400 || status === 422 || status === 501) && NO_TOOLS_RE.test(String(message || text.slice(0, 500)))) return new AiError('NO_TOOLS', 'The model does not support tool calling', extra);
+  const said = String(message || text.slice(0, 500));
+  if (((status === 400 || status === 422 || status === 501) && NO_TOOLS_RE.test(said)) || (status === 500 && FOUNDRY_NO_TOOLS_RE.test(said))) return new AiError('NO_TOOLS', 'The model does not support tool calling', extra);
   if (status === 401) return new AiError('AUTH', 'Authentication failed', extra);
   if (status === 403) return new AiError('FORBIDDEN', 'Access denied', extra);
   if (status === 404) return new AiError('NOT_FOUND', 'Model or endpoint not found', extra);
@@ -156,6 +161,10 @@ function validateConfig(o) {
     // a model running on this computer may need a long time for the first answer (loading, CPU only)
     timeoutMs: Number(o.timeoutMs) > 0 ? Number(o.timeoutMs) : (o.kind === 'local' ? 180000 : 90000),
     maxRetries: Number.isInteger(o.maxRetries) && o.maxRetries >= 0 ? o.maxRetries : 2,
+    // 'foundry': the server is Foundry Local (its reasoning models are told not to think aloud, see openaiBody)
+    flavor: o.kind === 'local' && o.flavor === 'foundry' ? 'foundry' : '',
+    // what a local server that cannot do tool calling gets instead: the tools are described in the prompt (see prompted-tools.js). 'auto' = only after the server refused tools.
+    promptedTools: o.kind === 'local' ? (['auto', 'always', 'never'].includes(o.promptedTools) ? o.promptedTools : 'auto') : 'never',
   };
 }
 
@@ -296,6 +305,8 @@ function openaiBody(cfg, req, withModel) {
   // Cloud models keep their defaults (reasoning models reject sampling parameters). A small local model is steadier at a low
   // temperature and must not ramble until its context is full, so these two are only sent to a local server.
   if (cfg.kind === 'local') { body.temperature = 0.2; body.max_tokens = 1024; }
+  // Foundry Local: Qwen3.5 would write its thoughts into the answer (80+ tokens, seconds on an integrated GPU); this switches thinking off.
+  if (cfg.flavor === 'foundry') body.reasoning_effort = 'none';
   return body;
 }
 
@@ -542,17 +553,41 @@ const GEMINI = {
 
 const ADAPTERS = { openai: OPENAI, azure: AZURE, foundry: FOUNDRY, anthropic: ANTHROPIC, gemini: GEMINI, local: OPENAI };
 
+// Local servers that refused tools (address|model): they get the tools in the prompt from then on, without asking the server again.
+const promptedMemo = new Set();
+const MAX_MEMO = 64;
+
 function createProvider(opts) {
   const cfg = validateConfig(opts);
   const adapter = ADAPTERS[cfg.kind];
+  const memoKey = cfg.baseUrl + '|' + cfg.model;
+
+  async function promptedChat(base, signal) {
+    const spec = adapter.chat(cfg, { system: promptedTools.systemWithTools(base.system, base.tools), messages: promptedTools.toPromptedMessages(base.messages), tools: [] });
+    const res = adapter.parse(cfg, await send(cfg, spec, signal));
+    const parsed = promptedTools.parseToolReply(res.text, base.tools);
+    return { text: parsed.text, toolCalls: parsed.toolCalls, raw: { role: 'assistant', content: res.text }, usage: res.usage, stopReason: parsed.toolCalls.length ? 'tool_calls' : res.stopReason };
+  }
+
   return {
     kind: cfg.kind,
     model: cfg.model,
+    // true once this model has been served with the tools described in the prompt (the server could not do tool calling itself)
+    toolsEmulated: () => promptedMemo.has(memoKey),
     async chat(req) {
       const r = req || {};
-      const spec = adapter.chat(cfg, { system: r.system || '', messages: Array.isArray(r.messages) ? r.messages : [], tools: r.tools });
-      const json = await send(cfg, spec, r.signal);
-      return adapter.parse(cfg, json);
+      const base = { system: r.system || '', messages: Array.isArray(r.messages) ? r.messages : [], tools: r.tools };
+      const wantsTools = toolList(r.tools).length > 0 && cfg.promptedTools !== 'never';
+      if (wantsTools && (cfg.promptedTools === 'always' || promptedMemo.has(memoKey))) return promptedChat(base, r.signal);
+      try {
+        const json = await send(cfg, adapter.chat(cfg, base), r.signal);
+        return adapter.parse(cfg, json);
+      } catch (e) {
+        if (!(wantsTools && e instanceof AiError && e.code === 'NO_TOOLS')) throw e;
+        if (promptedMemo.size >= MAX_MEMO) promptedMemo.clear();
+        promptedMemo.add(memoKey);
+        return promptedChat(base, r.signal);
+      }
     },
     async listModels(req) {
       if (!adapter.models) return [];

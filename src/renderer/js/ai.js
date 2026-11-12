@@ -8,19 +8,20 @@
   const t = (key, vars) => VE.i18n.t(key, vars);
   const api = window.api;
 
-  const PROVIDERS = ['builtin', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
-  const PROV_KEYS = { builtin: 'aiset.prov.builtin', openai: 'aiset.prov.openai', azure: 'aiset.prov.azure', foundry: 'aiset.prov.foundry', anthropic: 'aiset.prov.anthropic', gemini: 'aiset.prov.gemini', local: 'aiset.prov.local' };
-  const HINT_KEYS = { builtin: 'aiset.hint.builtin', openai: 'aiset.hint.openai', azure: 'aiset.hint.azure', foundry: 'aiset.hint.foundry', anthropic: 'aiset.hint.anthropic', gemini: 'aiset.hint.gemini', local: 'aiset.hint.local' };
+  const PROVIDERS = ['builtin', 'foundrylocal', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
+  const PROV_KEYS = { builtin: 'aiset.prov.builtin', foundrylocal: 'aiset.prov.foundrylocal', openai: 'aiset.prov.openai', azure: 'aiset.prov.azure', foundry: 'aiset.prov.foundry', anthropic: 'aiset.prov.anthropic', gemini: 'aiset.prov.gemini', local: 'aiset.prov.local' };
+  const HINT_KEYS = { builtin: 'aiset.hint.builtin', foundrylocal: 'aiset.hint.foundrylocal', openai: 'aiset.hint.openai', azure: 'aiset.hint.azure', foundry: 'aiset.hint.foundry', anthropic: 'aiset.hint.anthropic', gemini: 'aiset.hint.gemini', local: 'aiset.hint.local' };
   const AUTH_KEYS = { key: 'aiset.auth.key', entra: 'aiset.auth.entra' };
   const URL_HINT = {
-    builtin: '', openai: 'https://api.openai.com/v1', azure: 'https://RESOURCE.openai.azure.com', foundry: 'https://RESOURCE.services.ai.azure.com/api/projects/PROJECT',
+    builtin: '', foundrylocal: '', openai: 'https://api.openai.com/v1', azure: 'https://RESOURCE.openai.azure.com', foundry: 'https://RESOURCE.services.ai.azure.com/api/projects/PROJECT',
     anthropic: 'https://api.anthropic.com', gemini: 'https://generativelanguage.googleapis.com', local: 'http://127.0.0.1:11434/v1',
   };
-  const MODEL_HINT = { builtin: '', openai: 'gpt-4o-mini', azure: 'my-deployment', foundry: 'my-deployment', anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-flash', local: 'qwen2.5:3b' };
+  const MODEL_HINT = { builtin: '', foundrylocal: '', openai: 'gpt-4o-mini', azure: 'my-deployment', foundry: 'my-deployment', anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-flash', local: 'qwen2.5:3b' };
   // problems the user can fix in the settings dialog (the error card then offers a shortcut)
   const FIXABLE = ['AUTH', 'FORBIDDEN', 'NO_KEY', 'NOT_CONFIGURED', 'KEY_MISMATCH', 'NOT_FOUND', 'NO_TOOLS', 'URL', 'URL_EMPTY', 'URL_INVALID', 'URL_SCHEME', 'URL_CREDENTIALS', 'URL_NOT_LOCAL',
     'NOT_INSTALLED', 'MODEL_NOT_READY', 'HASH_MISMATCH', 'LLM_START_FAILED', 'LLM_START_TIMEOUT', 'RUNTIME_MISSING', 'WRITE_FAILED', 'ENTRA_NOT_CONFIRMED', 'ENDPOINT_NOT_CONFIRMED',
-    'CU_NO_ENDPOINT', 'CU_ORIGIN_MISMATCH', 'CU_NOT_CONFIRMED', 'CU_URL_INVALID', 'CU_URL_SCHEME', 'CU_URL_CREDENTIALS', 'CU_ANALYZER_INVALID', 'CU_NO_ANALYZER', 'CU_NO_DEFAULTS', 'CU_LOCATION'];
+    'CU_NO_ENDPOINT', 'CU_ORIGIN_MISMATCH', 'CU_NOT_CONFIRMED', 'CU_URL_INVALID', 'CU_URL_SCHEME', 'CU_URL_CREDENTIALS', 'CU_ANALYZER_INVALID', 'CU_NO_ANALYZER', 'CU_NO_DEFAULTS', 'CU_LOCATION',
+    'FL_NOT_INSTALLED', 'FL_START_FAILED', 'FL_LOAD_FAILED', 'FL_NOT_DOWNLOADED', 'FL_BAD_MODEL', 'FL_CLI_FAILED'];
   const EXAMPLES = ['ai.ex1', 'ai.ex2', 'ai.ex3', 'ai.ex4', 'ai.ex5'];
   // what the assistant can do with the video's CONTENT (only with the built-in model)
   const VISION_EXAMPLES = ['ai.exv1', 'ai.exv2', 'ai.exv3'];
@@ -86,6 +87,7 @@
     const s = state.status;
     const tries = [];
     if (s && s.provider === 'local') tries.push('ai.err.' + code + '_LOCAL');
+    if (s && s.provider === 'foundrylocal') tries.push('ai.err.' + code + '_FL');
     if (s && s.provider === 'builtin') tries.push('ai.err.' + code + '_BUILTIN');
     if (s && s.auth === 'entra') tries.push('ai.err.' + code + '_ENTRA');
     tries.push('ai.err.' + code);
@@ -99,7 +101,7 @@
   // errors the settings dialog can fix; for a local model an unreachable server is one of them (wrong port, not started)
   function isFixable(code) {
     const s = state.status;
-    return FIXABLE.includes(code) || ((code === 'NETWORK' || code === 'TIMEOUT') && !!s && s.provider === 'local');
+    return FIXABLE.includes(code) || ((code === 'NETWORK' || code === 'TIMEOUT') && !!s && (s.provider === 'local' || s.provider === 'foundrylocal'));
   }
 
   /* ---------- rendering ---------- */
@@ -212,6 +214,7 @@
     let label = t('ai.working');
     let ratio = null;
     if (VE.llmUI.state.loading) label = t('ai.loadingModel');
+    else if (live.phase === 'starting' || live.phase === 'loading') { const key = 'ai.fl.' + live.phase; label = t(key); }
     else if (live.analysis) {
       label = analysisLabel(live.analysis);
       if (live.analysis.phase === 'prepare') ratio = live.analysis.fraction || 0;
@@ -321,7 +324,7 @@
   // so that a model that cannot start is not retried in a loop).
   function maybeWarm() {
     const s = state.status;
-    const can = state.open && !!s && s.provider === 'builtin' && s.ready;
+    const can = state.open && !!s && (s.provider === 'builtin' || s.provider === 'foundrylocal') && s.ready;
     if (!can) { if (!state.open || !s || !s.ready) state.warmTried = false; return; }
     if (state.warmTried) return;
     state.warmTried = true;
@@ -381,12 +384,15 @@
     r.input.value = '';
     autosize();
     state.running = true;
-    state.live = { actions: [], search: null, found: [], analysis: null, analyses: [] };
+    state.live = { actions: [], search: null, found: [], analysis: null, analyses: [], phase: null };
     const runId = ++state.runId;
     const base = S.segments;
     renderAll();
     const off = api.on('ai:step', (ev) => {
       if (!ev || ev.runId !== runId || !state.live) return;
+      // Foundry Local: starting its server / loading the model (shown until the first real step arrives)
+      if (ev.kind === 'phase') state.live.phase = ev.phase === 'starting' || ev.phase === 'loading' ? ev.phase : null;
+      else state.live.phase = null;
       if (ev.kind === 'action') state.live.actions.push(ev.action);
       else if (ev.kind === 'reset') state.live.actions = [];
       else if (ev.kind === 'search') state.live.search = ev.phase === 'done' ? null : { object: ev.object, position: ev.position, phase: ev.phase, done: ev.done, total: ev.total };
@@ -497,9 +503,12 @@
     const canEntra = () => provider.value === 'azure' || provider.value === 'foundry';
     const entra = () => canEntra() && auth.value === 'entra';
     const builtin = () => provider.value === 'builtin';
+    const fl = () => provider.value === 'foundrylocal';
+    // the built-in model and Foundry Local bring their own panel instead of an address, a model name and a key
+    const panelled = () => builtin() || fl();
 
     const syncAuth = () => {
-      const noKey = builtin() || entra();
+      const noKey = panelled() || entra();
       keyRow.forEach((n) => { n.hidden = noKey; });
       keyHint.hidden = noKey || !keyHint.textContent;
       keyLabel.textContent = t(provider.value === 'local' ? 'aiset.keyOptional' : 'aiset.key');
@@ -513,9 +522,9 @@
       model.placeholder = MODEL_HINT[p];
       modelLabel.textContent = t(p === 'azure' || p === 'foundry' ? 'aiset.modelAzure' : 'aiset.model');
       providerHint.textContent = t(HINT_KEYS[p]);
-      // the built-in model has no address, model name or key: it brings its own panel instead
-      urlRow.forEach((n) => { n.hidden = builtin(); });
-      modelLabel.hidden = model.hidden = builtin();
+      // the built-in model and Foundry Local have no address, model name or key: they bring their own panel instead
+      urlRow.forEach((n) => { n.hidden = panelled(); });
+      modelLabel.hidden = model.hidden = panelled();
       verRow.forEach((n) => { n.hidden = p !== 'azure'; });
       authRow.forEach((n) => { n.hidden = !canEntra(); });
       find.hidden = p !== 'local';
@@ -523,7 +532,10 @@
       builtinWrap.hidden = !builtin();
       // the panel sits right below the provider row, and only exists in the dialog while "built-in" is chosen
       if (builtin()) { if (!builtinWrap.isConnected) grid.after(builtinWrap); } else builtinWrap.remove();
-      shareRow.hidden = builtin();
+      // Foundry Local's panel is made the first time it is chosen (it asks Foundry Local for its models)
+      if (fl()) { ensureFlPanel(); if (!flWrap.isConnected) grid.after(flWrap); } else flWrap.remove();
+      shareRow.hidden = panelled();
+      note.hidden = fl();
       note.innerHTML = t(builtin() ? 'llm.privacy' : 'aiset.privacy');
       if (!canEntra()) auth.value = 'key';
       syncAuth();
@@ -532,8 +544,8 @@
     const syncKey = (st2) => {
       key.placeholder = st2.hasKey ? '' : t('aiset.keyPlaceholder');
       keyHint.textContent = st2.hasKey ? t('aiset.keySaved', { mask: st2.masked }) : '';
-      keyHint.hidden = builtin() || entra() || !st2.hasKey;
-      if (clear) clear.hidden = builtin() || !st2.hasKey;
+      keyHint.hidden = panelled() || entra() || !st2.hasKey;
+      if (clear) clear.hidden = panelled() || !st2.hasKey;
     };
     const say = (kind, text) => { result.hidden = !text; result.className = 'ai-result ' + kind; result.textContent = text || ''; };
 
@@ -551,6 +563,20 @@
       errorText,
     });
     const builtinWrap = el('div', { class: 'llm-wrap' }, [builtinPanel.node]);
+
+    // Foundry Local: installed? running? which model, download (see flui.js); made when it is first chosen
+    let flPanel = null;
+    const flWrap = el('div', { class: 'llm-wrap', 'data-fl': 'wrap' });
+    const ensureFlPanel = () => {
+      if (flPanel) return flPanel;
+      flPanel = VE.flUI.panel({
+        getSavedModel: () => (state.status && state.status.provider === 'foundrylocal' ? state.status.model : (status.provider === 'foundrylocal' ? status.model : '')),
+        say,
+        errorText,
+      });
+      flWrap.append(flPanel.node);
+      return flPanel;
+    };
 
     const grid = el('div', { class: 'form-grid' }, [
       ...row(t('aiset.provider'), provider),
@@ -599,7 +625,7 @@
       cuWrap.hidden = provider.value !== 'foundry';
       cuDetails.hidden = !cuOn.checked;
       // while the video analysis is on, the note about what is sent says so
-      if (!builtin()) note.innerHTML = t(provider.value === 'foundry' && cuOn.checked ? 'aiset.privacyCu' : 'aiset.privacy');
+      if (!panelled()) note.innerHTML = t(provider.value === 'foundry' && cuOn.checked ? 'aiset.privacyCu' : 'aiset.privacy');
       const derived = deriveCuAddress(url.value) || (url.value.trim() ? '' : (s2.effectiveEndpoint || ''));
       cuDerived.textContent = cuEndpoint.value.trim() ? '' : t(derived ? 'aiset.cu.derived' : 'aiset.cu.derivedNone', { addr: derived });
       cuDerived.hidden = !cuDerived.textContent;
@@ -690,6 +716,25 @@
         say('ok', t('llm.testOk', { backend: t(started.backend === 'vk' ? 'llm.backend.vkShort' : 'llm.backend.cpuShort') }));
         return;
       }
+      if (fl()) {
+        // the model comes from Foundry Local's own list: save the choice, then start Foundry Local, load the model and ask it a test question
+        const choice = flPanel ? flPanel.getModel() : '';
+        const fail = () => { saveBtn.disabled = false; clear.disabled = false; };
+        if (!choice) { fail(); say('err', t('fl.needModel')); return; }
+        if (flPanel && !flPanel.isCached()) { fail(); say('err', t('fl.notDownloaded')); return; }
+        const savedF = await api.ai.save({ provider: 'foundrylocal', model: choice, shareNames: true });
+        if (!savedF.ok) { fail(); say('err', errorText(savedF.error)); return; }
+        state.status = savedF.status;
+        renderAll();
+        say('busy', t('fl.testing'));
+        const tested = await api.ai.test();
+        fail();
+        await refreshStatus();
+        if (flPanel) flPanel.update();
+        if (!tested.ok) { say('err', errorText(tested.error) + (tested.error && tested.error.detail ? ' (' + tested.error.detail + ')' : '')); return; }
+        say('ok', t('fl.testOk', { model: choice, vision: t(state.status && state.status.vision ? 'fl.testVision' : 'fl.testNoVision') }));
+        return;
+      }
       const cuReq = provider.value === 'foundry' ? { enabled: cuOn.checked, endpoint: cuEndpoint.value, analyzer: cuAnalyzer.value, location: cuLocation.value } : undefined;
       const saved = await api.ai.save({ provider: provider.value, baseUrl: url.value, model: model.value, apiVersion: version.value, shareNames: share.checked, auth: auth.value, apiKey: key.value, cu: cuReq });
       // a rejected save keeps what was typed so it can be corrected; the secret leaves the DOM as soon as the main process has it
@@ -733,7 +778,7 @@
 
     const body = el('div', { style: { display: 'contents' } }, [providerHint, grid, found, models, keyHint, authHint, shareRow, warn, cuWrap, note, result]);
     syncProvider(); // again, now that the dialog has a place to put the built-in model's panel
-    VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn], onClose: () => builtinPanel.destroy() });
+    VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn], onClose: () => { builtinPanel.destroy(); if (flPanel) flPanel.destroy(); } });
   }
 
   /* ---------- wiring ---------- */
@@ -747,6 +792,7 @@
     r.btn = r.btnAi;
     r.stopModel = r.aiStopModel;
     VE.llmUI.init();
+    VE.flUI.init();
     // download / verification progress and the model starting up are shown in the banner and in the live card
     VE.llmUI.onChange(() => { if (state.open) { renderState(); updateControls(); } });
 

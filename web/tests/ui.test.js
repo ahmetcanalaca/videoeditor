@@ -33,7 +33,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('01 no console errors on load', app.errors.length === 0, app.errors);
     check('02 Turkish and dark by default', (await lang()) === 'tr' && (await theme()) === 'dark', { lang: await lang(), theme: await theme() });
     check('03 only same-origin requests so far (no CDN, no font, no telemetry)', app.requests.every((u) => u.startsWith(app.origin) || /^(data|blob):/.test(u)), app.requests.filter((u) => !u.startsWith(app.origin)));
-    check('04 the AI button is offered; the assistant stays off until it is set up (nothing is contacted)', (await ev("document.querySelector('#btn-ai').hidden")) === false && (await ev('window.api.ai.status().then((s) => s.provider === "builtin" && s.needs === "install" && s.ready === false)')) === true);
+    check('04 the AI button is offered; the assistant stays off until it is set up (nothing is contacted)', (await ev("document.querySelector('#btn-ai').hidden")) === false && (await ev('window.api.ai.status().then((s) => s.provider === "foundry" && s.needs === "key" && s.ready === false)')) === true);
     await app.screenshot(path.join(SHOTS, 'web-01-empty-tr-dark.png'));
 
     /* ---------------- language and theme are remembered ---------------- */

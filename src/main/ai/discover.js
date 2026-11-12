@@ -45,9 +45,14 @@ const strings = (list) => (Array.isArray(list) ? list.filter((s) => typeof s ===
 const tidy = (id) => (/[\\/]/.test(id) ? id.split(/[\\/]/).filter(Boolean).pop() : id);
 
 async function probePort(port, timeoutMs) {
-  const [models, status] = await Promise.all([getJson(port, '/v1/models', timeoutMs), getJson(port, '/openai/status', timeoutMs)]);
-  // Foundry Local reports its endpoints at /openai/status
-  const foundry = !!status && typeof status === 'object' && (Array.isArray(status.Endpoints) || 'ModelDirPath' in status);
+  const [models, status, status14] = await Promise.all([getJson(port, '/v1/models', timeoutMs), getJson(port, '/openai/status', timeoutMs), getJson(port, '/status', timeoutMs)]);
+  // Foundry Local reports its endpoints at /openai/status (before 0.14) or at /status (0.14 and later)
+  const old = !!status && typeof status === 'object' && (Array.isArray(status.Endpoints) || 'ModelDirPath' in status);
+  const modern = !!status14 && typeof status14 === 'object' && (Array.isArray(status14.endpoints) || typeof status14.modelCachePath === 'string');
+  // Foundry Local 0.14 lists its whole catalogue at /v1/models (not the models that are on this computer), loads models only through its command line, and has its own option
+  // in the settings (foundry/local.js): it is not offered here.
+  if (modern) return { port, foundry: true, modern: true, models: [] };
+  const foundry = old;
   let ids = models && Array.isArray(models.data) ? strings(models.data.map((m) => m && m.id)).map(tidy) : null;
   if (!ids && foundry) ids = strings(await getJson(port, '/openai/models', timeoutMs)).map(tidy);
   if (!ids) return null;
@@ -106,7 +111,7 @@ async function discoverLocalServers(opts) {
     for (const p of await foundryCliPorts({ exec: o.exec, cliPath: o.cliPath, env: o.env })) if (!ports.includes(p)) ports.push(p);
   }
   const found = await Promise.all(ports.map((p) => probePort(p, timeoutMs)));
-  return found.filter(Boolean).map((f) => ({
+  return found.filter((f) => f && !f.modern).map((f) => ({
     name: f.foundry ? 'Foundry Local' : (nameOf.get(f.port) || 'OpenAI-compatible'),
     url: 'http://' + HOST + ':' + f.port + '/v1',
     models: f.models.slice(0, 300),

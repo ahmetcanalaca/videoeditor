@@ -43,6 +43,14 @@ Qwen3.5-4B (Q4_K_M and the image encoder "mmproj", GGUF files by unsloth) - Apac
    It is downloaded to the user's computer with one click in the AI settings, checked by size and SHA-256, and runs there. Verify the licence of the model weights yourself
    before redistributing anything.
 
+Not part of this project - a separate program that the user installs and the application only talks to
+-------------------------------------------------------------------------------------------------------
+
+Foundry Local (Microsoft) - installed by the user from Microsoft's own sources (`winget install Microsoft.FoundryLocal` or https://aka.ms/foundry-local-installer)
+   The desktop application can use an installed Foundry Local as the engine of the AI assistant (it runs the command line `foundry` and talks to its server on 127.0.0.1).
+   Nothing of Foundry Local, and none of its models, is contained in the installer or downloaded by this project; its licence terms and those of the models the user
+   chooses are Microsoft's and the model publishers'. https://learn.microsoft.com/azure/foundry-local/get-started   https://github.com/microsoft/Foundry-Local
+
 
 Notes
 -----

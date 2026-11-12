@@ -569,7 +569,7 @@
     messageBox: messageBox,
     closeAck: function () { return Promise.resolve(true); },
     closeConfirmed: function () { return Promise.resolve(true); },
-    // window.api.ai and window.api.llm (the assistant) are added by js/web/ai/ai-api.js
+    // window.api.ai (the assistant) is added by js/web/ai/ai-api.js
   };
 
   // browsers without WebCodecs cannot decode or encode: say so instead of failing at the first import

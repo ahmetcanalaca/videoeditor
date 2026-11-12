@@ -74,11 +74,6 @@ const BASE = '/videoeditor/';
     const denied = await ev("VE.web.net.fetch('https://not-allowed.example.com/v1/models').then(() => 'fetched', (e) => e.name + ': ' + e.message)");
     check('09e a request to an address the user did not allow is refused by the worker before it leaves', /^NotAllowed/.test(denied), denied);
 
-    // the Local AI helper is a download next to the app: published, checkable, and never cached by the worker (a stale hash would mislead)
-    const info = JSON.parse(fs.readFileSync(path.join(site, 'local-ai', 'info.json'), 'utf8'));
-    const li = await ev("(async () => { const r = await fetch('local-ai/info.json'); const j = await r.json(); const z = await (await fetch('local-ai/' + j.zip.name)).arrayBuffer(); const h = await crypto.subtle.digest('SHA-256', z); const hex = Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, '0')).join(''); let cachedAny = false; for (const k of await caches.keys()) { const c = await caches.open(k); for (const q of await c.keys()) if (/\\/local-ai\\//.test(q.url)) cachedAny = true; } return { sha: j.zip.sha256, hex, bytes: j.zip.bytes, len: z.byteLength, cachedAny }; })()");
-    check('08b the Local AI helper download is published: info.json matches the zip byte for byte, the worker never caches it, and it is not part of the precache', li.sha === li.hex && li.sha === info.zip.sha256 && li.bytes === li.len && !li.cachedAny && !manifest.files.some((f) => /^local-ai\//.test(f.url)) && fs.existsSync(path.join(site, 'local-ai', 'local-ai.ps1')) && fs.existsSync(path.join(site, 'local-ai', 'Start-Local-AI.cmd')), li);
-
     // offline: the server is gone
     await server.close();
     await app.navigate(origin + BASE, "typeof VE !== 'undefined' && !!VE.actions");
@@ -91,10 +86,6 @@ const BASE = '/videoeditor/';
     fs.appendFileSync(path.join(srcCopy, 'css', 'web.css'), '\n/* v2-marker */\n');
     const v2 = build({ root: srcCopy, out: site, quiet: true });
     check('13 a changed file gives a new build id', v2.build !== v1.build, { v1: v1.build, v2: v2.build });
-    // a change of the helper alone is a new build too (its hash is shown by the page)
-    fs.appendFileSync(path.join(srcCopy, 'local-ai', 'README.txt'), '\nchanged\n');
-    const v2b = build({ root: srcCopy, out: path.join(work, 'site-helper'), quiet: true });
-    check('13b a change of the Local AI helper alone gives a new build id', v2b.build !== v2.build, { v2: v2.build, v2b: v2b.build });
     server = await start({ root: site, port, base: BASE });
     await ev("window.__veSw.update().then(() => true)");
     await app.waitFor("!!window.__veSw.waiting || !!document.querySelector('dialog.ve-msgbox')", 30000, 'update found');

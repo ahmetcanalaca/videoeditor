@@ -8,7 +8,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
-const { pack: packLocalAi } = require('./local-ai-pack');
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
@@ -76,17 +75,13 @@ function build(opts) {
     }
   }
 
-  // 2b. the Local AI helper: a download next to the app, not part of it (not precached; its hashes still change the build id)
-  const helper = packLocalAi({ root: ROOT, out: OUT });
-  const downloads = helper.published;
-
-  // 3. the precache list: every file of the application (the helper download is not part of it)
+  // 3. the precache list: every file of the application
   const swSrc = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
   if (!swSrc.includes("'__BUILD_ID__'")) throw new Error('sw.js has no __BUILD_ID__ placeholder');
   if (!swSrc.includes("'__MANIFEST_SHA256__'")) throw new Error('sw.js has no __MANIFEST_SHA256__ placeholder');
   const files = copied.slice().sort().map((url) => ({ url, sha256: sha256(fs.readFileSync(path.join(OUT, url))) }));
   // the worker itself counts too: a changed worker is a new build (a new cache)
-  const all = copied.map((url) => url + ':' + sha256(fs.readFileSync(path.join(OUT, url)))).concat(downloads.map((d) => d.url + ':' + d.sha256), ['sw.js:' + sha256(Buffer.from(swSrc))]).sort();
+  const all = copied.map((url) => url + ':' + sha256(fs.readFileSync(path.join(OUT, url)))).concat(['sw.js:' + sha256(Buffer.from(swSrc))]).sort();
   const buildId = sha256(Buffer.from(all.join('\n'))).slice(0, 16);
   const manifestText = JSON.stringify({ version: pkg.version, build: buildId, files }, null, 1) + '\n';
   fs.writeFileSync(path.join(OUT, 'precache-manifest.json'), manifestText);
@@ -107,8 +102,8 @@ function build(opts) {
     '',
   ].join('\n'));
 
-  const bytes = copied.reduce((s, f) => s + fs.statSync(path.join(OUT, f)).size, 0) + downloads.reduce((s, d) => s + fs.statSync(path.join(OUT, d.url)).size, 0);
-  return { out: OUT, files: copied.length + downloads.length, precached: files.length, build: buildId, version: pkg.version, bytes };
+  const bytes = copied.reduce((s, f) => s + fs.statSync(path.join(OUT, f)).size, 0);
+  return { out: OUT, files: copied.length, precached: files.length, build: buildId, version: pkg.version, bytes };
 }
 
 module.exports = { build };
