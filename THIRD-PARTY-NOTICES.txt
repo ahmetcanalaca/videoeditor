@@ -1,0 +1,51 @@
+Video Editör (desktop application) - licence and third-party notices
+====================================================================
+
+Video Editör itself is MIT-licensed (the file LICENSE in the repository; it is shipped as LICENSE-VideoEditor.txt next to VideoEditor.exe). That licence covers the
+source code of this repository: the desktop application in src/ and the web edition in web/. The components below keep their own licences.
+The third-party components of the web edition are listed in web/THIRD-PARTY-NOTICES.txt.
+
+Türkçe özet: Uygulamanın kendi kodu MIT lisanslıdır (LICENSE-VideoEditor.txt). Aşağıdaki bileşenler kendi lisanslarıyla gelir; lisans metinlerinin yeri her maddede yazılıdır.
+
+
+What is inside the installer / the portable folder
+--------------------------------------------------
+
+1. Electron 45.2.3 (MIT) with Chromium, Node.js and the libraries they contain (various licences)
+   Where: VideoEditor.exe and the DLL / .pak files next to it.
+   Licence texts: LICENSE (Electron) and LICENSES.chromium.html (Chromium and its third-party components), both next to VideoEditor.exe.
+   Source: https://github.com/electron/electron (tag v45.2.3)
+
+2. FFmpeg 9.0.2 (ffmpeg.exe and ffprobe.exe) - GNU General Public License, version 3
+   The "essentials" build of https://www.gyan.dev/ffmpeg/builds/ (static, 64-bit). It is a GPL v3 build.
+   Licence text: resources\bin\FFMPEG-LICENSE.txt. Build information (configuration and the external libraries compiled into it): resources\bin\FFMPEG-BUILD-INFO.txt.
+   Source code of FFmpeg for this release, as linked by the build: https://github.com/FFmpeg/FFmpeg/commit/946fcce07b  (builds page: https://www.gyan.dev/ffmpeg/builds/)
+   The external libraries listed in FFMPEG-BUILD-INFO.txt (for example libx264, libx265, libvpx, libaom, libmp3lame, libopus) are compiled into that build by its author and keep their
+   own licences; this package does not carry their source code.
+   Video Editör starts ffmpeg.exe and ffprobe.exe as separate programs; it does not link to them. Pinned SHA-256 values: vendor/ffmpeg/ffmpeg-pin.json.
+
+3. llama.cpp b12212 (llama-server and its DLLs) - MIT License
+   Where: resources\llama\ (folders cpu\ and vk\). Licence text: resources\llama\LLAMA-CPP-LICENSE.txt. Copyright (c) 2023-2026 The ggml authors.
+   Source: https://github.com/ggml-org/llama.cpp (tag b12212). The release builds also contain small third-party parts; the licences of the ones the project lists are in the
+   licenses/ directory of that tag. Pinned SHA-256 values: vendor/llama/llama-pin.json.
+   LLVM OpenMP runtime (libomp.dll) - Apache License 2.0 with LLVM Exceptions. Licence text: resources\llama\cpu\LICENSE-LLVM-OpenMP and resources\llama\vk\LICENSE-LLVM-OpenMP.
+
+4. NSIS 3.11 (the setup program only)
+   The installer is made with the Nullsoft Scriptable Install System: zlib/libpng licence; its LZMA module is under the Common Public License 1.0 (https://nsis.sourceforge.io/License).
+   It is a build tool: only the small setup stub ends up inside the installer. Pinned in vendor/nsis/nsis-pin.json.
+
+
+Not part of the installer - downloaded only when the user asks for it
+----------------------------------------------------------------------
+
+Qwen3.5-4B (Q4_K_M and the image encoder "mmproj", GGUF files by unsloth) - Apache License 2.0
+   Model: https://huggingface.co/Qwen/Qwen3.5-4B   GGUF conversion: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF (fixed revision, see src/main/llm/catalog.js)
+   It is downloaded to the user's computer with one click in the AI settings, checked by size and SHA-256, and runs there. Verify the licence of the model weights yourself
+   before redistributing anything.
+
+
+Notes
+-----
+
+* The application's own code has no npm package at run time; the npm packages in package-lock.json are development tools only (the packager, the Electron fuses tool).
+* The guide and the developer guide (docs/GELISTIRICI-REHBERI-DEVELOPER-GUIDE.md, "Yayınlama notları / Publishing notes") describe how each component is pinned and checked.

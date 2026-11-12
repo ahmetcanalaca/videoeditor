@@ -266,7 +266,7 @@ Sonuç (dürüstçe): **iki şey kesin** — (1) süreleri **düz saniye** verin
 | 2 | ✔ Düzeltildi | `ffmpeg-static` + `ffprobe-static` kaldırıldı; **ffmpeg ve ffprobe tek pakette** (gyan.dev "essentials" **9.0.2**), `vendor\ffmpeg\ffmpeg-pin.json` ile SHA-256 sabit (paket hash'i gyan.dev ve GitHub'ın yayımladığıyla aynı; `scripts\fetch-ffmpeg.js` indirir/doğrular, `scripts\package.js` uyuşmazlıkta durur). Regresyon: dışa aktarma **27/27**, AI **142/142**, UI paketleri (geliştirme ve paketli exe'de) ve 4K60 **12/12 + 6/6** yeşil. Gereken tek kod değişikliği: FFmpeg 8'de kaldırılan `-filter_complex_script` → `-/filter_complex`; ayrıca FFmpeg 7+ başlangıç ilerleme bloğunu yazmadığı için dışa aktarma `%0` olayını kendisi bildiriyor. `probe()` çıktısı 27 örnek dosyada 4.0.2 ile **aynı** (yalnızca 2 stream-copy klipte süre 4,134 → 4,067 sn). Bedel: zip 190,6 → **215,9 MB**. |
 | 4 | ◐ Kısmen | ffmpeg.exe artık kurulumda doğrulamasız inmiyor (npm paketi yok, SHA-256 sabit). **Açık:** kilit dosyasında 51 girişin çoğu yalnızca `sha1` — herkese açık kayıt defterine erişilen bir ortamda `npm install --package-lock-only` ile `sha512` yenilenmeli. |
 | 3 | ☐ Açık | Electron fuse'ları (RunAsNode vb.) henüz değişmedi. |
-| — | ☐ Açık | Eşik-altı sertleştirme maddeleri ve Electron 45.2.3 güncellemesi. |
+| — | ◐ Kısmen | Electron 45.2.3 güncellemesi 3.2.0'da yapıldı; eşik-altı sertleştirme maddeleri açık. |
 
 **Düzeltme planı (Faz 0, 2–3 gün).** Aşağıdaki iki düzeltme ajan tarafından gömülü ikililerle **doğrulandı**; 1–3. maddeler 2.0.1'de uygulandı:
 
@@ -579,7 +579,7 @@ I handled "remove the sound there" in three ways: (a) **remove / mute** the soun
 | 2 | ✔ Fixed | `ffmpeg-static` + `ffprobe-static` removed; **ffmpeg and ffprobe come from one package** (gyan.dev "essentials" **9.0.2**), pinned by SHA-256 in `vendor\ffmpeg\ffmpeg-pin.json` (the package hash equals the one published by gyan.dev and GitHub; `scripts\fetch-ffmpeg.js` downloads/verifies, `scripts\package.js` stops on a mismatch). Regression: export **27/27**, AI **142/142**, the UI suites (in development and on the packaged exe) and 4K60 **12/12 + 6/6** are green. The only code change needed: `-filter_complex_script`, removed in FFmpeg 8, → `-/filter_complex`; and since FFmpeg 7+ no longer prints an initial progress block the export reports the `0 %` event itself. `probe()` output is **identical** to 4.0.2 on 27 sample files (only the duration of 2 stream-copy clips differs: 4.134 → 4.067 s). Cost: the zip grows 190.6 → **215.9 MB**. |
 | 4 | ◐ Partly | ffmpeg.exe is no longer downloaded at install time without a check (no npm package, SHA-256 pinned). **Open:** most of the 51 lock-file entries carry only `sha1` — refresh `sha512` with `npm install --package-lock-only` where the public registry is reachable. |
 | 3 | ☐ Open | The Electron fuses (RunAsNode etc.) are unchanged so far. |
-| — | ☐ Open | The below-threshold hardening items and the Electron 45.2.3 update. |
+| — | ◐ Partly | The Electron 45.2.3 update was done in 3.2.0; the below-threshold hardening items are still open. |
 
 **Fix plan (Phase 0, 2–3 days).** The first two fixes below were **verified** by the agent against the bundled binaries; items 1–3 were applied in 2.0.1:
 

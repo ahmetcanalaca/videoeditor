@@ -5,12 +5,12 @@
 The same compact editor as the Windows app, as a **static website**: no server code, no installation, no account, and **no API key to edit videos**.
 Your videos are opened with the browser's own file picker, decoded and encoded **inside the page** (WebCodecs, through the
 [Mediabunny](https://github.com/Vanilagy/mediabunny) library) and the result is written with the browser's save dialog.
-**Nothing is uploaded anywhere.** After the first visit the site also works **offline** (service worker).
+**Nothing is uploaded anywhere** unless you switch on the optional Foundry video analysis (then, each time you confirm it, a reduced copy goes to *your own* Azure resource). After the first visit the site also works **offline** (service worker).
 The optional **AI assistant** is the same as in the Windows app: it runs a model on *your* computer (the *Local AI helper*) or talks to the provider *you* choose with *your* key.
 
 Windows uygulamasıyla aynı kompakt editör, **statik bir web sitesi** olarak: sunucu kodu, kurulum, hesap yok; **video düzenlemek için API anahtarı gerekmez**.
 Videolarınız tarayıcının kendi dosya seçicisiyle açılır, **sayfanın içinde** çözülür/kodlanır (WebCodecs, Mediabunny kütüphanesi üzerinden)
-ve sonuç tarayıcının kaydetme penceresiyle yazılır. **Hiçbir şey bir yere yüklenmez.** İlk ziyaretten sonra site **internetsiz** de çalışır.
+ve sonuç tarayıcının kaydetme penceresiyle yazılır. **İsteğe bağlı Foundry video analizini açmadıkça hiçbir şey bir yere yüklenmez** (açarsanız her seferinde onayınızla küçültülmüş bir kopya *kendi* Azure kaynağınıza gider). İlk ziyaretten sonra site **internetsiz** de çalışır.
 İsteğe bağlı **AI asistanı** Windows uygulamasındakiyle aynıdır: *sizin* bilgisayarınızda çalışan bir modelle (*Yerel AI yardımcısı*) veya *sizin* seçtiğiniz sağlayıcıyla, *sizin* anahtarınızla çalışır.
 
 ## Use it / Kullanım
@@ -50,9 +50,9 @@ It is the desktop app's assistant, unchanged (`scripts/sync-desktop.js` bundles 
 | Provider | What runs where | Needs |
 |---|---|---|
 | **Local AI** (recommended) | The same model as the Windows app (Qwen3.5-4B with image input, llama.cpp) runs **on your computer** and listens on `127.0.0.1` only. | Download the small helper (zip) from the settings dialog, extract it, double-click `Start-Local-AI.cmd`. The first run downloads the engine (≈40 MB, github.com) and the model (≈3.4 GB, huggingface.co), checks every file against a pinned SHA-256, then opens this page with a pairing link; press *Connect*. Windows, ≈6 GB free memory. No account, no key to buy. |
-| OpenAI-compatible, Azure OpenAI, **Microsoft Foundry**, Anthropic, Gemini | The page calls the provider directly from your browser. Only your command and a **text** summary of the timeline are sent. | Your own API key (kept for this tab only, never written to a project or to disk). Entra ID: paste a short-lived access token. |
+| OpenAI-compatible, Azure OpenAI, **Microsoft Foundry**, Anthropic, Gemini | The page calls the provider directly from your browser. Only your command and a **text** summary of the timeline are sent. | Your own API key (kept for this tab only and never written to a project; the browser may keep a copy of an open tab's session data in its profile). Entra ID: paste a short-lived access token. |
 | Other local server (Ollama, LM Studio, Foundry Local, llama.cpp …) | On this computer. | The server must allow this site (CORS). |
-| **Foundry + Content Understanding** | Optional *video analysis*: with your confirmation each time, a small copy of your video is uploaded to **your** Azure resource; the result (scene descriptions, speech) comes back as text. | A Foundry / Azure AI resource with Content Understanding. |
+| **Foundry + Content Understanding** | Optional *video analysis*: with your confirmation each time, a small copy of your video is uploaded to **your** Azure resource; the result (scene descriptions, speech) comes back as text. For a zoom that has to aim at an object, a few small pictures (≤ 640 px, ≤ 120 KB each) can also be shown to your chat model, after a separate confirmation every time (the analysis says *when*, the pictures say *where*; this app does not keep them, the model service's own data policy applies). | A Foundry / Azure AI resource with Content Understanding; a chat model that accepts pictures (e.g. `gpt-4.1`) for the position. |
 
 Türkçe özet: *Yerel AI* modeli (masaüstündekiyle aynı) **sizin bilgisayarınıza** iner ve orada çalışır; bu site ona 127.0.0.1 üzerinden bağlanır. Yardımcı küçük bir zip'tir
 (`Start-Local-AI.cmd`, okunabilir PowerShell betiği); model ve motor ilk çalıştırmada indirilir ve SHA-256 ile doğrulanır. Bulut sağlayıcıları kendi anahtarınızla çalışır.
@@ -61,7 +61,7 @@ How it is kept safe:
 
 * **One network path.** The page itself can only talk to its own origin (`connect-src 'self'`). Every request of the assistant goes through a small worker (`js/web/ai/net-worker.js`) that has its own, stricter policy:
   `127.0.0.1` / `localhost`, the three well-known provider origins, and the https origins **you confirmed** in the settings (asked whenever you enter a key for such an address, saying what is sent there). No redirects, no cookies, no referrer.
-* **Keys.** A browser has no secure key store, so a cloud key lives in `sessionStorage` (this tab only, gone when the tab closes), is bound to the origin it was typed for, is only ever sent to that origin, and is never part of a project file.
+* **Keys.** A browser has no secure key store, so a cloud key lives in `sessionStorage` (this tab only, meant to be gone when the tab closes; a Chromium-based browser may still keep a copy of an open tab's session data in its profile folder for crash recovery, so on a shared computer use a key you can revoke), is bound to the origin it was typed for, is only ever sent to that origin, and is never part of a project file.
 * **The helper.** `127.0.0.1` only, a random key that is made on your computer **at every start** (handed to the page in the part of the address after `#`, which is never sent to a server; worthless once the helper's window is closed), SHA-256-pinned downloads, no administrator rights, nothing else contacted. It is a readable script: [`local-ai/`](local-ai/). It is not signed: you trust this repository and GitHub; the workflow that publishes the site attests the exact zip (signed build provenance), so `gh attestation verify` on the file you downloaded tells you where it was built, see [SECURITY.md](../SECURITY.md).
 * **Hosting.** Browsers isolate by origin, not by path: this site shares `*.github.io` with every other Pages site of the account. The service worker therefore verifies every cached file against the build manifest (whose hash is baked into the worker script), and you should not host untrusted content on other repositories of the same account (or give this site its own domain).
 * **Pairing.** The page asks before it connects to a helper ("Connect to the Local AI on this computer, port …?") and removes the key from the address bar at once.
@@ -100,6 +100,7 @@ node tests/smoke.test.js              # real Chrome/Edge (set VE_BROWSER to its 
 node tests/ui.test.js                 # the whole UI: languages, themes, import, editing, shortcuts, export dialog, projects
 node tests/ai.test.js                 # the assistant in the browser: pairing, cutting by command, cancel, wrong key, find_in_video, cloud providers, trust dialogs
 node tests/cu.test.js                 # Foundry + Content Understanding video analysis against the desktop app's mock of the service
+node tests/locate.test.js             # the zoom aims at WHERE the object is: pictures after a question every time, a stand-in vision model that decodes every JPEG (tests/locate-world.js)
 node tests/lna.test.js                # Local Network Access as Chrome/Edge enforce it (page counts as public, helper on loopback): refusal, grant, other tab
 node tests/ai-real.test.js            # MANUAL (npm run test:real): the real helper + the real Qwen3.5-4B + the page; needs the desktop app's model, ≈10 minutes
 node tests/pwa.test.js                # service worker: offline, headers, network-worker policy, integrity of the cache, update flow

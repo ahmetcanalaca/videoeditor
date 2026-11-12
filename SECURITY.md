@@ -20,18 +20,23 @@ as possible; fixes are published together with a note in the changelog.
   WebCodecs inside the page and writes the result with the save picker. There is no upload endpoint. The **only** requests that can leave the
   page belong to the optional AI assistant that you switch on yourself: to the Local AI on `127.0.0.1`, or to the provider you chose and confirmed
   (your command and a *text* summary of the timeline; with Foundry *video analysis* switched on, a small copy of the video goes to **your own**
-  Azure resource, after a confirmation every time).
+  Azure resource, after a confirmation every time, and - when a zoom has to aim at an object - a few small pictures (at most 640 px) go to **your own**
+  chat model, after a separate confirmation every time that names the number of pictures, the object and the model; this app does not keep them, the data policy of
+  the model's service applies there; each picture is at most 640 px and 120 KB, at most 64 requests per call, and a request that the provider adapter repeats after a
+  rate-limit or network error carries the same picture to the same address).
 * **One network path, with an allow-list.** The page's Content-Security-Policy is `connect-src 'self'`. All assistant requests are made by a
   dedicated worker (`web/js/web/ai/net-worker.js`) served with its own policy: `127.0.0.1` / `localhost`, three well-known provider addresses, and
   the https addresses you confirmed in the settings. No redirects, no cookies, no referrer.
 * **No API key, secret, token or account** is needed or contained: neither in the source nor in the published site. A key you type for a cloud
-  provider is kept in `sessionStorage` (this tab only), bound to the address it was typed for, sent only there, and never written to a project or to disk.
-* **The Local AI helper** runs the model on your computer: it listens on `127.0.0.1` only, every request needs a random key that is made on your computer
+  provider is kept in `sessionStorage` (this tab only, meant to be gone when the tab closes), bound to the address it was typed for, sent only there, and never
+  written by this site to a project or to a file. A Chromium-based browser may still keep a copy of an open tab's session data in its own profile folder (crash
+  recovery, "reopen closed tab"), so on a shared computer use a key you can revoke.
+* **The Local AI helper** runs the model on your computer: it listens on `127.0.0.1` only, every request except the status check `/health` (it only says that the server is up) needs a random key that is made on your computer
   **at every start** (handed to the page in the URL *fragment*, which browsers never send to a server, and removed from the address bar at once; it is
   worthless once the helper's window is closed), it downloads only from github.com and huggingface.co (their download servers), checks every file against a
   pinned SHA-256 before using it, checks that the program answering on its port is the one it started, needs no administrator rights and sends no
   telemetry. It is a readable script, not a binary.
-* **No telemetry, cookies or tracking.** Only `localStorage` for your settings (language, theme, assistant settings without keys, the pairing of the helper).
+* **No telemetry, cookies or tracking.** In this browser the page stores your settings and the pairing of the Local AI helper (`localStorage`; the helper's key changes at every start), the addresses you confirmed (`localStorage`, plus a Cache Storage copy for the network worker), the offline copy of the site itself (Cache Storage, service worker) and, only if you use the optional Foundry video analysis, its results (IndexedDB: scene descriptions and speech text of your videos, kept on this computer; 30 days / 100 MB).
 * **No third-party code is loaded at run time.** The few libraries are copied into `web/vendor/`, pinned by SHA-256
   (`web/vendor/vendor-lock.json`); the build fails if one of them changes. The page's Content-Security-Policy allows scripts from the
   site itself only (no inline scripts, no `eval`), and a service worker adds the same policy (plus `frame-ancestors 'none'`) as an HTTP
@@ -84,18 +89,22 @@ Lütfen güvenlik sorunlarını herkese açık issue yerine, GitHub'ın **Report
 * **Videolarınız bilgisayarınızdan çıkmaz.** Web sürümü, tarayıcının kendi dosya seçicisiyle seçtiğiniz dosyaları okur, sayfa içinde
   WebCodecs ile düzenler ve sonucu kaydetme penceresiyle yazar. Yükleme noktası yoktur. Sayfadan çıkabilecek **tek** istekler, sizin açtığınız
   isteğe bağlı AI asistanına aittir: `127.0.0.1` üzerindeki Yerel AI'ya ya da seçip onayladığınız sağlayıcıya (komutunuz ve zaman çizelgesinin
-  *metin* özeti; Foundry *video analizi* açıksa, her seferinde onayınızla videonun küçük bir kopyası **kendi** Azure kaynağınıza gider).
+  *metin* özeti; Foundry *video analizi* açıksa, her seferinde onayınızla videonun küçük bir kopyası **kendi** Azure kaynağınıza gider ve - bir zoom'un
+  bir nesneye kilitlenmesi gerekiyorsa - her seferinde ayrı bir onayla (resim sayısı, nesne ve model yazılır) birkaç küçük resim (en fazla 640 piksel) **kendi**
+  sohbet modelinize gider; bu uygulama onları saklamaz, modelin hizmetinde o hizmetin veri politikası geçerlidir; her resim en fazla 640 piksel ve 120 KB'tır, çağrı başına en fazla 64 istek yapılır ve sağlayıcı bağdaştırıcısının hız sınırı/ağ hatası sonrası yinelediği bir istek aynı resmi aynı adrese taşır).
 * **Tek ağ yolu ve izin listesi.** Sayfanın İçerik Güvenliği Politikası `connect-src 'self'` şeklindedir. Asistanın tüm istekleri, kendi
   politikasıyla sunulan ayrı bir worker tarafından (`web/js/web/ai/net-worker.js`) yapılır: `127.0.0.1` / `localhost`, üç bilinen sağlayıcı
   adresi ve ayarlarda onayladığınız https adresleri. Yönlendirme, çerez ve referrer yoktur.
 * **API anahtarı, secret, token veya hesap gerekmez ve yoktur** (kaynakta da yayınlanan sitede de). Bir bulut sağlayıcısı için yazdığınız anahtar
-  `sessionStorage` içinde (yalnızca bu sekme) tutulur, yazıldığı adrese bağlıdır, yalnızca oraya gönderilir; projeye veya diske yazılmaz.
-* **Yerel AI yardımcısı** modeli sizin bilgisayarınızda çalıştırır: yalnızca `127.0.0.1`'i dinler, her istek bilgisayarınızda **her başlatmada** üretilen
+  `sessionStorage` içinde (yalnızca bu sekme; sekme kapanınca silinmesi amaçlanır) tutulur, yazıldığı adrese bağlıdır, yalnızca oraya gönderilir; bu site onu projeye
+  veya dosyaya yazmaz. Chromium tabanlı bir tarayıcı yine de açık sekmenin oturum verisinin bir kopyasını (çökme kurtarma, "kapatılan sekmeyi yeniden aç") kendi
+  profil klasöründe tutabilir; bu yüzden paylaşılan bir bilgisayarda iptal edebileceğiniz bir anahtar kullanın.
+* **Yerel AI yardımcısı** modeli sizin bilgisayarınızda çalıştırır: yalnızca `127.0.0.1`'i dinler, durum denetimi `/health` (yalnızca sunucunun ayakta olduğunu söyler) dışında her istek bilgisayarınızda **her başlatmada** üretilen
   rastgele bir anahtar ister (sayfaya URL'nin *fragment* bölümünde verilir; tarayıcılar bunu hiçbir sunucuya göndermez ve sayfa adres çubuğundan hemen
   siler; yardımcının penceresi kapanınca değersiz olur), yalnızca github.com ve huggingface.co'dan (onların indirme sunucularından) indirir, kullanmadan
   önce her dosyayı sabitlenmiş SHA-256 ile denetler, portunda yanıt veren programın kendi başlattığı program olduğunu doğrular, yönetici yetkisi
   gerektirmez ve telemetri göndermez. İkili dosya değil, okunabilir bir betiktir.
-* **Telemetri, çerez, izleme yoktur.** Yalnızca ayarlarınız (dil, tema, anahtarsız asistan ayarları, yardımcının eşleşmesi) için `localStorage` kullanılır.
+* **Telemetri, çerez, izleme yoktur.** Sayfa bu tarayıcıda şunları saklar: ayarlarınız ve Yerel AI yardımcısının eşleşmesi (`localStorage`; yardımcının anahtarı her başlatmada değişir), onayladığınız adresler (`localStorage` ve ağ işçisi için bir Cache Storage kopyası), sitenin kendisinin çevrimdışı kopyası (Cache Storage, service worker) ve yalnızca isteğe bağlı Foundry video analizini kullanırsanız sonuçları (IndexedDB: videolarınızın sahne açıklamaları ve konuşma metni, bu bilgisayarda kalır; 30 gün / 100 MB).
 * **Çalışma anında üçüncü taraf kod yüklenmez.** Az sayıdaki kütüphane `web/vendor/` içine kopyalanmış ve SHA-256 ile sabitlenmiştir
   (`web/vendor/vendor-lock.json`); biri değişirse derleme başarısız olur. Sayfanın İçerik Güvenliği Politikası (CSP) yalnızca sitenin
   kendi betiklerine izin verir (satır içi betik yok, `eval` yok); GitHub Pages özel başlık gönderemediği için aynı politikayı
