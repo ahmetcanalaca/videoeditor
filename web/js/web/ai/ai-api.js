@@ -22,6 +22,8 @@
   const BUILTIN_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
   const CU_ANALYSIS_TIMEOUT_MS = 60 * 60 * 1000;
   const CU_TEST_TIMEOUT_MS = 45 * 1000;
+  // the chat models whose adapters pass a picture on (the others - Anthropic, Gemini - read text only, so they are not offered locate_in_video)
+  const LOCATE_PROVIDERS = ['foundry', 'azure', 'openai'];
   const SEG_KEYS = ['id', 'mediaId', 'in', 'out', 'speed', 'zoomFrom', 'zoomTo', 'fx', 'fy', 'volume', 'mute', 'fadeIn', 'fadeOut'];
   const EXPORT_DEFAULT = ['original', 'auto', 'auto', 'high'];
   const t = (key, vars) => window.VE.i18n.t(key, vars);
@@ -376,6 +378,41 @@
     }
   }
 
+  // locate_in_video: WHERE in the picture something is. The Content Understanding analysis says WHEN but has no positions; the position comes from a few small
+  // pictures that are shown to the model the user chose for the chat (the same deployment, address and key as the conversation itself). The user is asked before
+  // EVERY use, with the number and size of the pictures, and nothing is cut out of the video before they said yes. The time limits, the budget of pictures and the
+  // rule "a no is a no for the whole request" are in src/main/perception/locate.js.
+  function makeLocator(o) {
+    // o: { provider, st, session, userText, runSignal, runId, hooks: { pause, resume }, getExtractor() -> Promise<extractor> }
+    try {
+      const L = K.core.perceptionLocate;
+      const origin = new URL(o.st.effectiveBaseUrl).origin; // of the provider that was made for this request (not read again from the settings, which may change meanwhile)
+      return L.createLocator({
+        pieces: o.session.originalMap(),
+        fileOf: (mediaId) => { if (!VEW.getMedia(mediaId)) throw new Error('media is gone'); return mediaId; },
+        ffmpegPath: 'browser',
+        procs: null,
+        extract: async (req) => (await o.getExtractor()).extract(req),
+        vlm: K.core.perceptionCloudVlm.createCloudVlm({ provider: o.provider }),
+        userText: o.userText,
+        signal: o.runSignal,
+        hooks: o.hooks,
+        confirmFrames: async (plan) => {
+          const choice = await api.messageBox({
+            type: 'question', title: t('app.title'), message: t('web.locate.confirmMsg', { n: plan.pictures, mb: plan.megabytes, origin }),
+            detail: t('web.locate.confirmDetail', { object: plan.object, model: o.st.model, ranges: plan.ranges, seconds: plan.seconds, side: L.PICTURE_SIDE }),
+            buttons: [t('web.locate.send'), t('web.trust.cancel')], defaultId: 1, cancelId: 1,
+          });
+          return choice === 0;
+        },
+        onProgress: (p) => VEW.emit('ai:step', Object.assign({ runId: o.runId, kind: 'search' }, p)),
+        log: () => {},
+      });
+    } catch (e) {
+      return null; // without it the assistant still zooms into the center
+    }
+  }
+
   async function webCu() {
     if (!cuMod) cuMod = await import('./web-cu.js');
     return cuMod;
@@ -552,13 +589,15 @@
     const runId = typeof r.runId === 'number' || typeof r.runId === 'string' ? r.runId : 0;
     active = { controller, runId };
     let extractor = null;
+    let extractorLoad = null;
+    // the pictures come from the browser's own decoder; made when they are first needed
+    const getExtractor = () => extractorLoad || (extractorLoad = import('./web-frames.js').then((frames) => { extractor = frames.createFrameExtractor((id) => VEW.getMedia(id)); return extractor; }));
     try {
       const provider = providerFor(st);
       const prompt = String(r.prompt || '');
       let perceptionFactory;
       if (st.vision) {
-        const frames = await import('./web-frames.js');
-        extractor = frames.createFrameExtractor((id) => VEW.getMedia(id));
+        await getExtractor();
         const ep = helperEndpoint();
         perceptionFactory = (session) => makePerception(ep, session, prompt, controller.signal, runId, extractor);
       }
@@ -569,6 +608,11 @@
           core: K.core, status: st, session, runSignal: controller.signal, runId, hooks: { pause: disarm, resume: arm }, getMedia: (id) => VEW.getMedia(id), vault: () => vault, net: VEW.net,
           emit: (step) => VEW.emit('ai:step', Object.assign({ runId }, step)), confirmUpload: (plan) => confirmUpload(plan), timeoutMs: CU_ANALYSIS_TIMEOUT_MS, onCache: (info) => { cuCache = info; },
         });
+      }
+      // WHERE in the picture (for a model that reads the analysis): only with Content Understanding, and only for a chat model that can be shown a picture
+      let locatorFactory;
+      if (analysisFactory && !perceptionFactory && LOCATE_PROVIDERS.includes(st.provider)) {
+        locatorFactory = (session) => makeLocator({ provider, st, session, userText: prompt, runSignal: controller.signal, runId, hooks: { pause: disarm, resume: arm }, getExtractor });
       }
       return await K.core.agent.runAgent({
         provider,
@@ -581,12 +625,13 @@
         onStep: (step) => VEW.emit('ai:step', Object.assign({ runId }, step)),
         perceptionFactory,
         analysisFactory,
+        locatorFactory,
       });
     } catch (err) {
       return { ok: false, error: await explainNetworkError(K.core.agent.aiErrorInfo(err), st) };
     } finally {
       clearTimeout(budget.timer);
-      if (extractor) extractor.close();
+      if (extractor) extractor.close(); else if (extractorLoad) extractorLoad.then((e) => e.close(), () => {});
       active = null;
     }
   }
@@ -716,7 +761,7 @@
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* the fragment stays visible */ }
     await ensure();
     const port = Number(m[1]);
-    const choice = await api.messageBox({ type: 'question', title: t('app.title'), message: t('web.pair.msg', { port }), detail: t('web.pair.detail'), buttons: [t('web.pair.connect'), t('web.trust.cancel')], defaultId: 0, cancelId: 1 });
+    const choice = await api.messageBox({ type: 'question', title: t('app.title'), message: t('web.pair.msg', { port }), detail: t('web.pair.detail'), buttons: [t('web.pair.connect'), t('web.trust.cancel')], defaultId: 1, cancelId: 1 });
     if (choice !== 0) return;
     const res = await llmPair({ port, key: m[2] });
     if (!res.ok) return;

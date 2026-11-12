@@ -303,6 +303,13 @@ const rejects = async (fn, code) => {
     eq(r2.intervals.length, 1, 'touching ranges are merged by the final merge, not by the runs');
   });
 
+  await test('scan: appearances in two ranges that do not touch are never joined, however short the gap (nobody looked at what lies between them)', async () => {
+    const w = world([[10, 20.5], [23.2, 34]]);
+    const r = await run(w, { ranges: [{ a: 5, b: 21 }, { a: 21.6, b: 40 }] });
+    eq(r.intervals.length, 2, JSON.stringify(r.intervals));
+    near(r.intervals[0].end, 21, 1e-9, 'the first one stops at the end of its range'); near(r.intervals[1].start, 23.2, 0.6);
+  });
+
   await test('scan: progress goes forward, phases come in order', async () => {
     const w = world([[10, 20]]);
     const events = [];

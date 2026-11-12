@@ -245,6 +245,22 @@ const toolList = (tools) => (Array.isArray(tools) ? tools : []);
 const emptySchema = () => ({ type: 'object', properties: {} });
 const toText = (v) => (typeof v === 'string' ? v : JSON.stringify(v == null ? '' : v));
 
+// A user message may carry pictures: a list of parts { type: 'text', text } and { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,...' } } (the pictures
+// of locate_in_video). Only the OpenAI-style adapters (OpenAI, Azure OpenAI, Foundry, local servers) send them; every other adapter reads the text parts only, so
+// that a picture can never end up in a prompt as base64 text.
+const MAX_IMAGE_URL = 4 * 1024 * 1024;
+const isImagePart = (p) => isObj(p) && p.type === 'image_url' && isObj(p.image_url) && typeof p.image_url.url === 'string' && p.image_url.url.length < MAX_IMAGE_URL && p.image_url.url.startsWith('data:image/jpeg;base64,');
+const textOf = (content) => (Array.isArray(content) ? content.filter((p) => isObj(p) && p.type === 'text' && typeof p.text === 'string').map((p) => p.text).join('\n') : toText(content));
+function openaiUserContent(content) {
+  if (!Array.isArray(content)) return toText(content);
+  const parts = [];
+  for (const p of content) {
+    if (isObj(p) && p.type === 'text' && typeof p.text === 'string') parts.push({ type: 'text', text: p.text });
+    else if (isImagePart(p)) parts.push({ type: 'image_url', image_url: { url: p.image_url.url } });
+  }
+  return parts.length ? parts : '';
+}
+
 /* ------------------------------------------------------------------ OpenAI / Azure OpenAI */
 
 function openaiMessages(system, messages) {
@@ -252,7 +268,7 @@ function openaiMessages(system, messages) {
   if (system) out.push({ role: 'system', content: system });
   for (const m of messages) {
     if (m.role === 'user') {
-      out.push({ role: 'user', content: toText(m.content) });
+      out.push({ role: 'user', content: openaiUserContent(m.content) });
     } else if (m.role === 'assistant') {
       const msg = { role: 'assistant', content: m.content ? String(m.content) : null };
       if (isObj(m.raw) && Array.isArray(m.raw.tool_calls) && m.raw.tool_calls.length) msg.tool_calls = m.raw.tool_calls;
@@ -359,7 +375,7 @@ function anthropicMessages(messages) {
   };
   for (const m of messages) {
     if (m.role === 'user') {
-      push('user', [{ type: 'text', text: toText(m.content) }]);
+      push('user', [{ type: 'text', text: textOf(m.content) }]);
     } else if (m.role === 'assistant') {
       let blocks;
       if (Array.isArray(m.raw) && m.raw.length) blocks = m.raw;
@@ -445,7 +461,7 @@ function geminiContents(messages) {
   let lastCalls = [];
   for (const m of messages) {
     if (m.role === 'user') {
-      out.push({ role: 'user', parts: [{ text: toText(m.content) }] });
+      out.push({ role: 'user', parts: [{ text: textOf(m.content) }] });
     } else if (m.role === 'assistant') {
       let parts;
       if (Array.isArray(m.raw) && m.raw.length) parts = m.raw;

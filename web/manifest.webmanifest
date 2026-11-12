@@ -1,7 +1,7 @@
 {
   "name": "Video Editör",
   "short_name": "Video Editör",
-  "description": "Video editor that runs in the browser: split, trim, merge, speed, zoom. Your videos stay on your computer.",
+  "description": "Video editor that runs in the browser: split, trim, merge, speed, zoom. Your videos are edited in your browser, on your computer.",
   "lang": "tr",
   "start_url": "./",
   "scope": "./",

@@ -40,7 +40,7 @@ Where things are
   (%APPDATA%\VideoEditor\models), it is used in place after the same check - nothing is downloaded twice.
 
 Security and privacy
-  - The model server listens on 127.0.0.1 only and every request needs a key. A new random key is made on your computer at every start (so a link or a log
+  - The model server listens on 127.0.0.1 only and every request needs a key, except the status check /health (it only says that the server is up). A new random key is made on your computer at every start (so a link or a log
     line that leaked is worthless once the window is closed) and handed to the page in the part of the address after "#", which browsers never send to a server.
   - The helper contacts github.com and huggingface.co (the downloads of the first run; the files may come from their download servers) and nothing else. No account, no telemetry.
   - The helper is a plain, readable PowerShell script (local-ai.ps1), not signed. WHAT YOU TRUST: the person who owns the repository
@@ -108,7 +108,7 @@ Dosyalar nerede?
   (%APPDATA%\VideoEditor\models) aynı denetimden sonra yerinde kullanılır; hiçbir şey iki kez indirilmez.
 
 Güvenlik ve gizlilik
-  - Model sunucusu yalnızca 127.0.0.1'i dinler ve her istek anahtar ister. Her başlatmada bilgisayarınızda yeni bir rastgele anahtar üretilir (sızan bir bağlantı
+  - Model sunucusu yalnızca 127.0.0.1'i dinler ve durum denetimi /health (yalnızca sunucunun ayakta olduğunu söyler) dışında her istek anahtar ister. Her başlatmada bilgisayarınızda yeni bir rastgele anahtar üretilir (sızan bir bağlantı
     veya günlük satırı pencere kapanınca değersiz olur) ve sayfaya adresin "#" sonrası bölümünde verilir; tarayıcılar bu bölümü hiçbir sunucuya göndermez.
   - Yardımcı yalnızca github.com ve huggingface.co'ya bağlanır (ilk çalıştırmadaki indirmeler; dosyalar onların indirme sunucularından gelebilir); başka hiçbir yere değil. Hesap yok, telemetri yok.
   - Yardımcı düz, okunabilir, imzasız bir PowerShell betiğidir (local-ai.ps1). GÜVENDİĞİNİZ: deponun sahibi

@@ -825,7 +825,7 @@
   /* ------------------------------------------------------------------ the video as seen by find_in_video */
 
   const FOUND_PROPS = {
-    found: { type: 'string', description: 'Instead of start/end: the id returned by find_in_video (e.g. "f1"). The tool is applied to every part of the video where that thing was seen.' },
+    found: { type: 'string', description: 'Instead of start/end: the id returned by find_in_video or locate_in_video (e.g. "f1"). The tool is applied to every part of the video where that thing was seen.' },
     occurrence: { type: 'string', description: 'Only with found: "all" (default), "first", "last" or a part number (1, 2, ...).' },
   };
 
@@ -853,20 +853,43 @@
     }),
   };
 
+  // WHERE in the picture a thing is, inside time ranges the analysis gave (only together with analyze_video: see main/perception/locate.js). A few small pictures of
+  // the video go to the user's own model for this, after the user allowed it.
+  const LOCATE_TOOL = {
+    name: 'locate_in_video',
+    description: 'Find WHERE in the picture a thing is, inside time ranges you already know (the scenes analyze_video gave). The analysis has no positions; this looks at a few small pictures taken inside those ranges and returns an id ("f1") for the parts where the thing is really visible, with its position. Then pass found="<id>" to set_zoom (it aims at the object by itself) or to remove_range, keep_range, set_speed, set_volume, set_fade or reset_effects. Use it only when the edit needs the position (a zoom into the thing); to cut, speed up or mute the scenes use their start/end directly. The user is asked before any picture leaves the computer (the pictures go to the same model that you are) and it takes up to a minute: call it ONCE for all ranges together, never twice for the same thing. object: a short English noun ("car", "dog", "person"). Give color or position ONLY if the user said so.',
+    parameters: obj({
+      object: { type: 'string', description: 'Short English noun phrase for the thing to locate, e.g. "car", "dog", "person", "laptop screen".' },
+      color: { type: 'string', description: 'Colour of the thing, only if the user named one (English, e.g. "orange").' },
+      position: { type: 'string', enum: ['left', 'right', 'top', 'bottom', 'center'], description: 'Where in the picture, only if the user said so (e.g. "the car on the left").' },
+      ranges: {
+        type: 'array',
+        description: 'The time ranges to look at: start and end (seconds, original timeline) of the scenes where the thing appears, at most 12 and 300 s together.',
+        items: obj({
+          start: { type: 'number', description: 'Start of the range (seconds, original timeline).' },
+          end: { type: 'number', description: 'End of the range (seconds, original timeline).' },
+        }, ['start', 'end']),
+      },
+    }, ['object', 'ranges']),
+  };
+
   // The tool list for a model that can LOOK at the video: every range tool also takes found=, and find_in_video is added.
-  // A model that can READ an analysis of the video (Azure Content Understanding) gets analyze_video. Everybody else keeps TOOL_DEFS unchanged.
+  // A model that can READ an analysis of the video (Azure Content Understanding) gets analyze_video, and - when pictures may be shown to a model, see above -
+  // locate_in_video (with found= on the range tools). Everybody else keeps TOOL_DEFS unchanged.
   function getToolDefs(opts) {
     const o = opts || {};
+    const locate = !!(o.locate && o.analysis && !o.perception);
     if (!o.perception && !o.analysis) return TOOL_DEFS;
-    const defs = o.perception
+    const defs = o.perception || locate
       ? TOOL_DEFS.map((def) => (RANGE_TOOLS.has(def.name)
         ? Object.assign({}, def, { parameters: Object.assign({}, def.parameters, { properties: Object.assign({}, def.parameters.properties, FOUND_PROPS) }) })
         : def))
       : TOOL_DEFS.slice();
     if (o.perception) defs.push(FIND_TOOL);
     if (o.analysis) defs.push(ANALYZE_TOOL);
+    if (locate) defs.push(LOCATE_TOOL);
     return defs;
   }
 
-  return { Session, TOOL_DEFS, TOOL_NAMES: Object.keys(TOOLS), getToolDefs, FIND_TOOL_NAME: FIND_TOOL.name, ANALYZE_TOOL_NAME: ANALYZE_TOOL.name, autoZoomFactor, parseTime, FOCUS_NAMES, EXPORT_ENUMS, MAX_PIECES };
+  return { Session, TOOL_DEFS, TOOL_NAMES: Object.keys(TOOLS), getToolDefs, FIND_TOOL_NAME: FIND_TOOL.name, ANALYZE_TOOL_NAME: ANALYZE_TOOL.name, LOCATE_TOOL_NAME: LOCATE_TOOL.name, autoZoomFactor, parseTime, FOCUS_NAMES, EXPORT_ENUMS, MAX_PIECES };
 });

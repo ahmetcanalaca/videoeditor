@@ -34,7 +34,7 @@ jobs:
           command -v ffmpeg ffprobe google-chrome
       - name: Smoke, UI, assistant, Foundry, Local Network Access and offline (service worker) tests
         working-directory: web
-        run: node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/lna.test.js && node tests/pwa.test.js
+        run: node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/locate.test.js && node tests/lna.test.js && node tests/pwa.test.js
         env:
           VE_FFMPEG: /usr/bin/ffmpeg
           VE_FFPROBE: /usr/bin/ffprobe

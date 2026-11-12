@@ -52,7 +52,7 @@ function makeResult(seconds, o) {
 }
 
 // opts: { key, bearer, polls, result(info), failPost: {status, code, message}, failOperation: {code, message}, defaults, analyzerStatus, foreignLocation,
-//         chat(req, body) -> {status?, json}, onRequest(entry) }
+//         chat(req, body) -> {status?, json} | Promise of it, onRequest(entry) }
 function startMockCu(opts) {
   const o = Object.assign({ polls: 1, defaults: { 'gpt-4.1': 'gpt41', 'text-embedding-3-large': 'embed' }, analyzerStatus: 200 }, opts || {});
   const state = { requests: [], uploads: [], deleted: [], operations: new Map(), seq: 0, options: o };
@@ -81,8 +81,7 @@ function startMockCu(opts) {
         if (!o.chat) { send(404, { error: { message: 'no chat' } }); return; }
         let json = null;
         try { json = JSON.parse(body.toString('utf8')); } catch (e) { /* not JSON */ }
-        const r = o.chat(entry, json);
-        send(r.status || 200, r.json);
+        Promise.resolve(o.chat(entry, json)).then((r) => send(r.status || 200, r.json), () => send(500, { error: { message: 'the chat hook failed' } }));
         return;
       }
       if (req.method === 'GET' && u.pathname === '/contentunderstanding/defaults') { send(200, { modelDeployments: o.defaults }); return; }

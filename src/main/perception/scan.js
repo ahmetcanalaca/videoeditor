@@ -166,16 +166,19 @@ async function scan(opts) {
       report('ground');
     }
     if (!boxes.length) continue; // "yes" in the coarse pass but nothing to draw a box around: a false alarm
-    kept.push({ start: f.start, end: f.end, box: medianBox(boxes), samples: count, boxes: boxes.length });
+    kept.push({ start: f.start, end: f.end, box: medianBox(boxes), samples: count, boxes: boxes.length, ri: cells[f.run.from].ri });
   }
 
   /* ---- 4. merge appearances that are only one missed picture apart, drop slivers ---- */
+  // Only inside one range, or between ranges that touch: nobody looked at what lies between two ranges that do not (the scenes of an analysis, for example), so the
+  // object cannot be claimed to be there however short the gap is.
+  const touching = (ra, rb) => ra === rb || ranges[rb].a - ranges[ra].b <= 0.25;
   const merged = [];
   for (const iv of kept.sort((x, y) => x.start - y.start)) {
     const last = merged[merged.length - 1];
-    if (last && iv.start - last.end <= step * 1.25) {
+    if (last && touching(last.ri, iv.ri) && iv.start - last.end <= step * 1.25) {
       const bl = last.boxList.concat(iv.box ? [iv.box] : []);
-      Object.assign(last, { end: Math.max(last.end, iv.end), samples: last.samples + iv.samples, boxList: bl, box: medianBox(bl) });
+      Object.assign(last, { end: Math.max(last.end, iv.end), samples: last.samples + iv.samples, boxList: bl, box: medianBox(bl), ri: iv.ri });
     } else merged.push(Object.assign({}, iv, { boxList: iv.box ? [iv.box] : [] }));
   }
   const intervals = merged

@@ -36,17 +36,17 @@ function balancedPieces(text) {
   return out;
 }
 
-function collectFourNumbers(value, out, label) {
+function collectFourNumbers(value, out, label, key) {
   if (Array.isArray(value)) {
-    if (value.length === 4 && value.every(isNum)) { out.push({ raw: value, label }); return; }
-    for (const v of value) collectFourNumbers(v, out, label);
+    if (value.length === 4 && value.every(isNum)) { out.push({ raw: value, label, key }); return; }
+    for (const v of value) collectFourNumbers(v, out, label, key);
   } else if (value && typeof value === 'object') {
     const lab = typeof value.label === 'string' ? value.label : (typeof value.name === 'string' ? value.name : label);
     let used = false;
     for (const k of BOX_KEYS) {
-      if (value[k] !== undefined) { collectFourNumbers(value[k], out, lab); used = true; break; }
+      if (value[k] !== undefined) { collectFourNumbers(value[k], out, lab, k); used = true; break; }
     }
-    if (!used) for (const k of Object.keys(value)) collectFourNumbers(value[k], out, lab);
+    if (!used) for (const k of Object.keys(value)) collectFourNumbers(value[k], out, lab, key);
   }
 }
 
@@ -66,27 +66,59 @@ function rawBoxes(text) {
   return out;
 }
 
+// One list of four numbers, read in the given coordinate system -> a normalised box, or null when it is not a plausible box.
+// size: { width, height } of the image that was shown (only needed for the "px" format)
+function toBox(raw, label, format, size) {
+  const [a, b, c, d] = raw;
+  let x1; let y1; let x2; let y2;
+  if (format === 'k1000') { x1 = a / 1000; y1 = b / 1000; x2 = c / 1000; y2 = d / 1000; }
+  else if (format === 'k1000yx') { y1 = a / 1000; x1 = b / 1000; y2 = c / 1000; x2 = d / 1000; }
+  else if (format === 'px') {
+    if (!size || !(size.width > 0) || !(size.height > 0)) return null;
+    x1 = a / size.width; y1 = b / size.height; x2 = c / size.width; y2 = d / size.height;
+  } else { x1 = a; y1 = b; x2 = c; y2 = d; }
+  if (x2 < x1) [x1, x2] = [x2, x1];
+  if (y2 < y1) [y1, y2] = [y2, y1];
+  // far outside the picture = not a box in this coordinate system
+  if (x1 < -0.05 || y1 < -0.05 || x2 > 1.15 || y2 > 1.15) return null;
+  const box = { x1: clamp01(x1), y1: clamp01(y1), x2: clamp01(x2), y2: clamp01(y2) };
+  if (box.x2 - box.x1 < 0.01 || box.y2 - box.y1 < 0.01 || (box.x2 - box.x1) * (box.y2 - box.y1) < 0.0003) return null;
+  if (label) box.label = String(label).slice(0, 60);
+  return box;
+}
+
 // size: { width, height } of the image that was shown (only needed for the "px" format)
 function parseBoxes(text, format, size) {
   if (!FORMATS.includes(format)) throw new Error('Unknown box format ' + format);
   const out = [];
   for (const r of rawBoxes(text)) {
-    const [a, b, c, d] = r.raw;
-    let x1; let y1; let x2; let y2;
-    if (format === 'k1000') { x1 = a / 1000; y1 = b / 1000; x2 = c / 1000; y2 = d / 1000; }
-    else if (format === 'k1000yx') { y1 = a / 1000; x1 = b / 1000; y2 = c / 1000; x2 = d / 1000; }
-    else if (format === 'px') {
-      if (!size || !(size.width > 0) || !(size.height > 0)) continue;
-      x1 = a / size.width; y1 = b / size.height; x2 = c / size.width; y2 = d / size.height;
-    } else { x1 = a; y1 = b; x2 = c; y2 = d; }
-    if (x2 < x1) [x1, x2] = [x2, x1];
-    if (y2 < y1) [y1, y2] = [y2, y1];
-    // far outside the picture = not a box in this coordinate system
-    if (x1 < -0.05 || y1 < -0.05 || x2 > 1.15 || y2 > 1.15) continue;
-    const box = { x1: clamp01(x1), y1: clamp01(y1), x2: clamp01(x2), y2: clamp01(y2) };
-    if (box.x2 - box.x1 < 0.01 || box.y2 - box.y1 < 0.01 || (box.x2 - box.x1) * (box.y2 - box.y1) < 0.0003) continue;
-    if (r.label) box.label = String(r.label).slice(0, 60);
-    out.push(box);
+    const box = toBox(r.raw, r.label, format, size);
+    if (box) out.push(box);
+  }
+  return out;
+}
+
+// A cloud model is asked for fractions, but it may still answer in pixels of the picture it was shown or on a 0..1000 grid. Which system a list of four
+// numbers is in follows from its size: everything within 0..1 = fractions; within the picture's size = pixels; within 0..1000 = the grid. The key helps where the
+// size cannot decide: a model that answers with "bbox_2d" (the name of the Qwen family's own format, measured with the built-in model: asked for fractions with the key
+// "bbox", it still answered {"bbox_2d":[86,371,532,796]}) writes on the 0..1000 grid, which on a small picture also looks like pixels.
+function guessFormat(v, size, key) {
+  const lo = Math.min(v[0], v[1], v[2], v[3]);
+  const hi = Math.max(v[0], v[1], v[2], v[3]);
+  if (lo >= -0.05 && hi <= 1.15) return 'unit';
+  if (key === 'bbox_2d' && lo >= -50 && hi <= 1100) return 'k1000';
+  if (size && size.width > 0 && size.height > 0 && Math.max(v[0], v[2]) <= size.width * 1.05 && Math.max(v[1], v[3]) <= size.height * 1.05) return 'px';
+  if (lo >= -50 && hi <= 1100) return 'k1000';
+  return null;
+}
+
+// Like parseBoxes, for an answer whose coordinate system is not known in advance (every box is judged by itself).
+function parseBoxesAuto(text, size) {
+  const out = [];
+  for (const r of rawBoxes(text)) {
+    const format = guessFormat(r.raw, size, r.key);
+    const box = format ? toBox(r.raw, r.label, format, size) : null;
+    if (box) out.push(box);
   }
   return out;
 }
@@ -140,4 +172,4 @@ function inPosition(box, position) {
   return true;
 }
 
-module.exports = { FORMATS, parseBoxes, iou, center, area, medianBox, representative, inPosition, median };
+module.exports = { FORMATS, parseBoxes, parseBoxesAuto, iou, center, area, medianBox, representative, inPosition, median };

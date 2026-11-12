@@ -6,3 +6,10 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+  # Electron and the build tools (development dependencies; the shipped app has no npm package at run time): security updates of Electron arrive as pull requests
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps

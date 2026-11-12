@@ -99,6 +99,10 @@ const STR = {
     cuUploadMessage: 'Şu videoların küçültülmüş kopyası (en fazla 480p, tek kanallı ses; yaklaşık {mb} MB) yüklenip Azure Content Understanding ile analiz edilecek:',
     cuUploadDetail: 'Kopya yalnızca bu analiz için gönderilir ve Azure aboneliğinizde ücretlendirilir (1 saatlik video için birkaç dolar; kullandığınız modele göre değişir). Sonuç (sahne açıklamaları ve konuşma metni) bu bilgisayarda saklanır ve komutu uygulayabilmesi için sohbet modelinize metin olarak da gönderilir; aynı video için yeniden yüklenmez; hizmetteki kopyanın silinmesi hemen istenir. Verinin işlenebileceği yer: {loc}.',
     cuUploadAllow: 'Yükle ve analiz et', cuUploadCancel: 'İptal',
+    locateTitle: 'Resimler modele gönderilsin mi?',
+    locateMessage: 'Nesnenin yerini bulmak için videonuzdan en fazla {n} küçük resim (toplam en fazla {mb} MB) sohbet için seçtiğiniz modele gönderilecek:',
+    locateDetail: 'Aranan: {object}\nModel: {model}\nBakılacak bölümler: {ranges} aralık, toplam {seconds} sn\n\nResimler en fazla {side} piksele küçültülür ve yalnızca bu konumu bulmak için gönderilir; bu uygulama onları saklamaz (modelin hizmetinde o hizmetin kendi veri politikası geçerlidir). İzin vermezseniz yakınlaştırma görüntünün ortasına yapılır. Bu soru her seferinde yeniden sorulur.',
+    locateAllow: 'Resimleri gönder', locateCancel: 'Vazgeç',
     cuLoc: { geography: 'kaynağınızla aynı coğrafya', dataZone: 'kaynağınızla aynı veri bölgesi', global: 'dünya genelinde herhangi bir Azure veri merkezi' },
   },
   en: {
@@ -121,6 +125,10 @@ const STR = {
     cuUploadMessage: 'A reduced copy of these videos (at most 480p, mono audio; about {mb} MB) will be uploaded and analysed with Azure Content Understanding:',
     cuUploadDetail: 'The copy is sent for this analysis only and is billed to your Azure subscription (a few dollars per hour of video; it depends on the model you use). The result (scene descriptions and speech text) is kept on this computer and is also sent as text to your chat model so that it can carry out the command; the same video is not uploaded again; the service is asked to delete its copy right away. Where the data may be processed: {loc}.',
     cuUploadAllow: 'Upload and analyse', cuUploadCancel: 'Cancel',
+    locateTitle: 'Send pictures to the model?',
+    locateMessage: 'To find where the object is, up to {n} small pictures (at most {mb} MB in total) from your video will be sent to the model you chose for the chat:',
+    locateDetail: 'Looking for: {object}\nModel: {model}\nParts to look at: {ranges} range(s), {seconds} s in total\n\nThe pictures are reduced to at most {side} pixels and sent only to find this position; this app does not keep them (the data policy of the model service applies there). If you decline, the zoom aims at the center of the picture. You are asked every time.',
+    locateAllow: 'Send the pictures', locateCancel: 'Cancel',
     cuLoc: { geography: 'the same geography as your resource', dataZone: 'the same data zone as your resource', global: 'any Azure data centre worldwide' },
   },
 };
@@ -849,6 +857,27 @@ function registerIpc() {
     return res.response === 0;
   }
 
+  // Before every use of locate_in_video: a few small pictures of the video go to the chat model the user chose. The page cannot answer this dialog, and nothing is cut
+  // out of the video or sent without it. plan: { object, ranges, seconds, pictures, megabytes, origin, model, side }
+  async function confirmFrames(plan) {
+    const fill = (s) => s.replace('{n}', () => String(plan.pictures)).replace('{mb}', () => String(plan.megabytes)).replace('{object}', () => String(plan.object)).replace('{model}', () => String(plan.model))
+      .replace('{ranges}', () => String(plan.ranges)).replace('{seconds}', () => String(plan.seconds)).replace('{side}', () => String(plan.side));
+    const message = fill(str('locateMessage')) + '\n\n' + plan.origin;
+    const detail = fill(str('locateDetail'));
+    const buttons = [str('locateAllow'), str('locateCancel')];
+    if (process.env.VE_TEST_MODE === '1') {
+      // automated tests: the dialog is recorded and answered from a file next to the log ("deny" or "allow", allow by default)
+      if (process.env.VE_TEST_MSGBOX_LOG) {
+        try { fs.appendFileSync(process.env.VE_TEST_MSGBOX_LOG, JSON.stringify({ title: str('locateTitle'), message, detail, buttons }) + '\n'); } catch (err) { /* ignore */ }
+      }
+      let answer = process.env.VE_TEST_FRAMES_CONFIRM || 'allow';
+      if (process.env.VE_TEST_MSGBOX_LOG) { try { answer = fs.readFileSync(process.env.VE_TEST_MSGBOX_LOG + '.frames', 'utf8').trim() || answer; } catch (err) { /* default */ } }
+      return answer !== 'deny';
+    }
+    const res = await dialog.showMessageBox(mainWindow, { type: 'warning', title: str('locateTitle'), message, detail, buttons, defaultId: 1, cancelId: 1, noLink: true });
+    return res.response === 0;
+  }
+
   aiIpc = registerAiIpc({
     handle,
     getSettings: () => settings.get(),
@@ -865,6 +894,7 @@ function registerIpc() {
     procs,
     confirmEndpoint,
     confirmUpload,
+    confirmFrames,
     log: (m) => { if (process.env.VE_LLM_LOG) console.log('[ai] ' + m); },
   });
 }

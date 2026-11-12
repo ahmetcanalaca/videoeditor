@@ -2,6 +2,10 @@
 // MANUAL end-to-end measurement of find_in_video with the REAL built-in model (not part of `npm test`; needs the model files, ~3.4 GB).
 //   1. node tests/llm-serve.js --models=<root>          (keeps the model running and writes tests/out/llm-serve.json)
 //   2. node tests/e2e-find.js [--films=dog,car] [--probe=512] [--ground=768] [--max-frames=100] [--out=tests/out/e2e-find.json]
+//      node tests/e2e-find.js --mode=cloud [--films=dog,car]
+//         --mode=cloud measures locate_in_video instead: the ranges a Content Understanding analysis would give (the true appearances, 1 s wider on both sides) are handed to
+//         the locator, which looks only inside them and asks the model through its CHAT route (the same code and prompt that a Foundry / Azure / OpenAI model gets: a user
+//         message with the picture, fractions asked for; here answered by the built-in Qwen3.5-4B), and the box is compared with the COCO box.
 // Two "films" are built from real COCO photographs (tests/pilot/coco_vlm) whose content is known from the COCO annotations: dog photos mixed with
 // photos that certainly contain NO dog (and the same for cars). Each query is run through the real code path of the app: ffmpeg frames, the
 // vision model, the scan with edge refinement, box handling. The truth is compared with what was found: time accuracy, false alarms, missed parts,
@@ -10,15 +14,20 @@ const fs = require('fs');
 const path = require('path');
 const { createVlm } = require('../src/main/perception/vlm');
 const { createPerception } = require('../src/main/perception');
+const { createLocator } = require('../src/main/perception/locate');
+const { createCloudVlm } = require('../src/main/perception/cloud-vlm');
+const { createProvider } = require('../src/main/ai/providers');
 const { iou } = require('../src/main/perception/boxes');
 const H = require('./helpers');
 
 const arg = (n, d) => { const a = process.argv.find((x) => x.startsWith('--' + n + '=')); return a ? a.slice(n.length + 3) : d; };
+const MODE = arg('mode', 'builtin'); // builtin: find_in_video | cloud: locate_in_video
+const VERBOSE = arg('verbose', '') === '1';
 const FILMS = arg('films', 'dog,car').split(',');
 const PROBE = Number(arg('probe', 512));
 const GROUND = Number(arg('ground', 768));
 const MAX_FRAMES = Number(arg('max-frames', 100));
-const OUT = arg('out', path.join(__dirname, 'out', 'e2e-find.json'));
+const OUT = arg('out', path.join(__dirname, 'out', MODE === 'cloud' ? 'e2e-locate.json' : 'e2e-find.json'));
 const PHOTOS = path.join(__dirname, 'pilot', 'coco_vlm');
 const FILM_DIR = path.join(__dirname, 'out', 'e2e-films');
 const W = 960;
@@ -96,8 +105,10 @@ function timeScore(truth, pred, total) {
     return json;
   };
   const vlm = createVlm({ boxFormat: 'k1000', chat });
+  // cloud mode: the model is reached through a chat PROVIDER, like a Foundry / Azure / OpenAI deployment (a user message of the question and the picture)
+  const provider = MODE === 'cloud' ? createProvider({ kind: 'local', baseUrl: info.baseUrl, model: 'built-in', apiKey: info.key, fetch: (u, i) => fetch(u, i), timeoutMs: 300000 }) : null;
   const rows = [];
-  console.log(`e2e  backend=${info.backend}  probe=${PROBE}px ground=${GROUND}px maxFrames=${MAX_FRAMES}\n`);
+  console.log(`e2e  mode=${MODE}  backend=${info.backend}  ` + (MODE === 'cloud' ? 'pictures 640px, ranges = the true parts widened by 1 s' : `probe=${PROBE}px ground=${GROUND}px maxFrames=${MAX_FRAMES}`) + '\n');
 
   const queries = [];
   for (const name of FILMS) {
@@ -107,13 +118,37 @@ function timeScore(truth, pred, total) {
   }
   for (const q of queries) {
     const { film } = q;
-    const perception = createPerception({
-      pieces: [{ b0: 0, b1: film.total, mediaId: 'm', in: 0, speed: 1 }], fileOf: () => film.file, ffmpegPath: H.bins.ffmpeg, vlm,
-      userText: 'find the ' + q.object, maxFrames: MAX_FRAMES, sides: { probe: PROBE, ground: GROUND },
-    });
     calls = 0; callSecs = 0;
     const t0 = Date.now();
-    const res = await perception.find({ object: q.object });
+    let res;
+    if (MODE === 'cloud') {
+      const timed = { chat: async (req) => {
+        const t1 = Date.now();
+        try {
+          const res = await provider.chat(req);
+          if (VERBOSE) console.log('      call ' + (calls + 1) + ': ' + ((Date.now() - t1) / 1000).toFixed(1) + ' s  ' + JSON.stringify(String(res.text).slice(0, 90)));
+          return res;
+        } catch (e) {
+          if (VERBOSE) console.log('      call ' + (calls + 1) + ': FAILED after ' + ((Date.now() - t1) / 1000).toFixed(1) + ' s  ' + (e.code || '') + ' ' + (e.message || ''));
+          throw e;
+        } finally { calls++; callSecs += (Date.now() - t1) / 1000; }
+      } };
+      const locator = createLocator({
+        pieces: [{ b0: 0, b1: film.total, mediaId: 'm', in: 0, speed: 1 }], fileOf: () => film.file, ffmpegPath: H.bins.ffmpeg, procs: null, vlm: createCloudVlm({ provider: timed }),
+        userText: 'find the ' + q.object, confirmFrames: async (plan) => { console.log('    plan: ' + JSON.stringify(plan)); return true; }, timeoutMs: 20 * 60 * 1000, // a laptop graphics chip needs seconds per picture
+      });
+      // what a Content Understanding analysis would hand over: the scenes in which the object is (a little wider than the object really is there)
+      const cuRanges = film.truth.map(([a, b]) => ({ start: Math.max(0, a - 1), end: Math.min(film.total, b + 1) }));
+      const r = await locator.locate({ object: q.object, ranges: cuRanges });
+      if (!r.ok) throw new Error('locate_in_video failed: ' + (r.code || '') + ' ' + (r.error || ''));
+      res = { intervals: r.intervals, frames: r.frames, probes: r.probes };
+    } else {
+      const perception = createPerception({
+        pieces: [{ b0: 0, b1: film.total, mediaId: 'm', in: 0, speed: 1 }], fileOf: () => film.file, ffmpegPath: H.bins.ffmpeg, vlm,
+        userText: 'find the ' + q.object, maxFrames: MAX_FRAMES, sides: { probe: PROBE, ground: GROUND },
+      });
+      res = await perception.find({ object: q.object });
+    }
     const secs = (Date.now() - t0) / 1000;
     const pred = res.intervals.map((iv) => [iv.start, iv.end]);
     const sc = timeScore(q.truth, pred, film.total);
@@ -121,12 +156,14 @@ function timeScore(truth, pred, total) {
     const per = q.truth.map(([a, b]) => {
       const m = res.intervals.filter((iv) => iv.end > a && iv.start < b).sort((x, y) => (Math.min(y.end, b) - Math.max(y.start, a)) - (Math.min(x.end, b) - Math.max(x.start, a)))[0];
       const g = film.boxes.find((x) => Math.abs(x.start - a) < 0.01);
-      return { truth: [a, b], found: m ? [m.start, m.end] : null, startErr: m ? +(m.start - a).toFixed(2) : null, endErr: m ? +(m.end - b).toFixed(2) : null, boxIoU: m && m.box && g ? +iou(m.box, g.box).toFixed(2) : null, hasGt: !!g };
+      // where the zoom would aim (the centre of the box) against where the object is: in fractions of the picture
+      const cErr = m && m.box && g ? +Math.hypot((m.box.x1 + m.box.x2) / 2 - (g.box.x1 + g.box.x2) / 2, (m.box.y1 + m.box.y2) / 2 - (g.box.y1 + g.box.y2) / 2).toFixed(3) : null;
+      return { truth: [a, b], found: m ? [m.start, m.end] : null, startErr: m ? +(m.start - a).toFixed(2) : null, endErr: m ? +(m.end - b).toFixed(2) : null, boxIoU: m && m.box && g ? +iou(m.box, g.box).toFixed(2) : null, centerErr: cErr, hasGt: !!g };
     });
     const row = { query: q.label, film: film.name, filmSeconds: film.total, truth: q.truth, pred, ...sc, secs: +secs.toFixed(1), frames: res.frames, probes: res.probes, calls, secsPerCall: +(callSecs / Math.max(1, calls)).toFixed(2), per };
     rows.push(row);
     console.log(`${q.label.padEnd(18)} film ${film.name} (${film.total}s): truth ${q.truth.length} parts, found ${res.intervals.length}; time-IoU ${sc.iou}  (hit ${sc.tp}s, missed ${sc.fn}s, false ${sc.fp}s)  ${secs.toFixed(0)} s, ${calls} model calls (${(callSecs / Math.max(1, calls)).toFixed(2)} s each)`);
-    per.forEach((p) => console.log(`    truth ${p.truth.map((x) => x.toFixed(0)).join('-')}  ->  ${p.found ? p.found.map((x) => x.toFixed(1)).join('-') : 'MISSED'}   edges ${p.startErr}/${p.endErr}  box IoU ${p.boxIoU === null ? (p.hasGt ? 'n/a' : '-') : p.boxIoU}`));
+    per.forEach((p) => console.log(`    truth ${p.truth.map((x) => x.toFixed(0)).join('-')}  ->  ${p.found ? p.found.map((x) => x.toFixed(1)).join('-') : 'MISSED'}   edges ${p.startErr}/${p.endErr}  box IoU ${p.boxIoU === null ? (p.hasGt ? 'n/a' : '-') : p.boxIoU}  centre error ${p.centerErr === null ? '-' : p.centerErr}`));
     const extra = pred.filter(([a, b]) => !q.truth.some(([x, y]) => b > x && a < y));
     if (extra.length) console.log('    FALSE ALARM parts: ' + extra.map((e) => e.map((x) => x.toFixed(1)).join('-')).join(', '));
   }
@@ -134,9 +171,10 @@ function timeScore(truth, pred, total) {
   const parts = present.reduce((s, r) => s + r.truth.length, 0);
   const hit = present.reduce((s, r) => s + r.per.filter((p) => p.found).length, 0);
   const boxes = present.flatMap((r) => r.per.filter((p) => p.boxIoU !== null).map((p) => p.boxIoU));
-  const summary = { parts, hit, falseAlarmSecs: +rows.reduce((s, r) => s + r.fp, 0).toFixed(1), meanTimeIoU: +(present.reduce((s, r) => s + r.iou, 0) / Math.max(1, present.length)).toFixed(3), boxIoU50: boxes.filter((x) => x >= 0.5).length + '/' + boxes.length, meanSecs: +(rows.reduce((s, r) => s + r.secs, 0) / rows.length).toFixed(1) };
-  console.log('\n==== e2e: parts found ' + hit + '/' + parts + ', false-alarm seconds ' + summary.falseAlarmSecs + ', mean time-IoU ' + summary.meanTimeIoU + ', boxes with IoU>=0.5: ' + summary.boxIoU50 + ', mean ' + summary.meanSecs + ' s per query ====');
+  const centers = present.flatMap((r) => r.per.filter((p) => p.centerErr !== null).map((p) => p.centerErr));
+  const summary = { parts, hit, falseAlarmSecs: +rows.reduce((s, r) => s + r.fp, 0).toFixed(1), meanTimeIoU: +(present.reduce((s, r) => s + r.iou, 0) / Math.max(1, present.length)).toFixed(3), boxIoU50: boxes.filter((x) => x >= 0.5).length + '/' + boxes.length, meanCenterErr: +(centers.reduce((s, x) => s + x, 0) / Math.max(1, centers.length)).toFixed(3), maxCenterErr: centers.length ? Math.max(...centers) : null, meanSecs: +(rows.reduce((s, r) => s + r.secs, 0) / rows.length).toFixed(1) };
+  console.log('\n==== e2e: parts found ' + hit + '/' + parts + ', false-alarm seconds ' + summary.falseAlarmSecs + ', mean time-IoU ' + summary.meanTimeIoU + ', boxes with IoU>=0.5: ' + summary.boxIoU50 + ', zoom-centre error mean ' + summary.meanCenterErr + ' max ' + summary.maxCenterErr + ' (fraction of the picture), mean ' + summary.meanSecs + ' s per query ====');
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
-  fs.writeFileSync(OUT, JSON.stringify({ backend: info.backend, probe: PROBE, ground: GROUND, maxFrames: MAX_FRAMES, summary, rows }, null, 1));
+  fs.writeFileSync(OUT, JSON.stringify({ mode: MODE, backend: info.backend, probe: PROBE, ground: GROUND, maxFrames: MAX_FRAMES, summary, rows }, null, 1));
   process.exit(0);
 })().catch((e) => { console.error('E2E FAILED', e); process.exit(1); });

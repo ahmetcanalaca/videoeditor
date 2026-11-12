@@ -23,6 +23,9 @@ const BUILTIN_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 // Analysing the video with Content Understanding (upload + waiting for the service) is not counted against the request's own time limit; it has its own.
 const CU_ANALYSIS_TIMEOUT_MS = 60 * 60 * 1000;
 const CU_TEST_TIMEOUT_MS = 45 * 1000;
+// locate_in_video (WHERE in the picture) shows a few small pictures to the chat model; offered only for the chat models whose adapter passes a picture on
+// (Anthropic and Gemini read text only), and only together with the video analysis.
+const LOCATE_PROVIDERS = ['foundry', 'azure', 'openai'];
 
 // How the assistant signs in: 'key' (API key, required), 'entra' (Azure CLI token, Azure OpenAI / Foundry only), 'optional' (local server),
 // 'none' (the built-in model: a random key is made for every start of its private server, see llm/server.js).
@@ -41,7 +44,8 @@ function isLoopbackHost(url) {
 //        userDataPath, tempDir?, safeStorage, session, llm (the built-in model, see llm/ipc.js; optional), getBins() -> { ffmpeg }, procs,
 //        confirmEndpoint(origin, kind) -> Promise<boolean> (native dialog: may the requests - kind 'key': prompts + API key, kind 'entra': a
 //        Microsoft Entra ID token, kind 'cu': reduced copies of the user's videos - be sent to this origin?),
-//        confirmUpload(plan) -> Promise<boolean> (native dialog before each upload for the video analysis) }
+//        confirmUpload(plan) -> Promise<boolean> (native dialog before each upload for the video analysis),
+//        confirmFrames(plan) -> Promise<boolean> (native dialog before pictures of the video are shown to the chat model: locate_in_video) }
 function registerAiIpc(ctx) {
   let providers = null;
   const P = () => providers || (providers = require('./providers'));
@@ -455,6 +459,34 @@ function registerAiIpc(ctx) {
     };
   }
 
+  // locate_in_video: WHERE in the picture something is (see perception/locate.js). The analysis says WHEN; a few small pictures go to the chat model the user chose - the
+  // same deployment, address and key as the conversation - and only after the user said yes in a native dialog, every time. The network window of the run is already
+  // open for the chat model's address, so the pictures cannot go anywhere else.
+  function makeLocator(st, provider, session, userText, runSignal, runId, hooks) {
+    const bins = ctx.getBins ? ctx.getBins() : {};
+    if (!bins || !bins.ffmpeg || !ctx.confirmFrames) return null;
+    try {
+      const L = require('../perception/locate');
+      const { createCloudVlm } = require('../perception/cloud-vlm');
+      const origin = new URL(st.effectiveBaseUrl).origin; // of the provider that was made for this request (not read again from the settings, which may change meanwhile)
+      return L.createLocator({
+        pieces: session.originalMap(),
+        fileOf: (mediaId) => { const info = ctx.getMedia(mediaId); if (!info || !info.path) throw new Error('media is gone'); return info.path; },
+        ffmpegPath: bins.ffmpeg,
+        procs: ctx.procs,
+        vlm: createCloudVlm({ provider }),
+        userText,
+        signal: runSignal,
+        hooks,
+        confirmFrames: (plan) => ctx.confirmFrames(Object.assign({}, plan, { origin, model: st.model, side: L.PICTURE_SIDE })),
+        onProgress: (p) => ctx.send('ai:step', Object.assign({ runId, kind: 'search' }, p)),
+        log: ctx.log,
+      });
+    } catch (e) {
+      return null; // without it the assistant still zooms into the center
+    }
+  }
+
   ctx.handle('ai:run', async (e, req) => {
     const r = req && typeof req === 'object' ? req : {};
     const st = status();
@@ -484,6 +516,9 @@ function registerAiIpc(ctx) {
         onStep: (step) => ctx.send('ai:step', Object.assign({ runId }, step)),
         perceptionFactory: st.vision && ep ? (session) => makePerception(ep, session, String(r.prompt || ''), controller.signal, runId) : undefined,
         analysisFactory: st.cu && st.cu.ready ? (session) => makeAnalysis(st, session, controller.signal, runId, { pause: disarm, resume: arm }) : undefined,
+        locatorFactory: st.cu && st.cu.ready && !st.vision && LOCATE_PROVIDERS.includes(st.provider)
+          ? (session) => makeLocator(st, provider, session, String(r.prompt || ''), controller.signal, runId, { pause: disarm, resume: arm })
+          : undefined,
       }));
     } catch (err) {
       return { ok: false, error: aiErrorInfo(err) };

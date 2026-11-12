@@ -142,4 +142,16 @@ function groundingPrompt(phrase, position) {
   return 'Locate the ' + phrase + ' ' + WHERE[position] + '.' + format + ' If there is none, reply with [].';
 }
 
-module.exports = { reconcile, presencePrompt, groundingPrompt, fold, POSITIONS, wordsIn, writtenPositions, POSITION_WORDS, COLOR_WORDS };
+// The same question for a CLOUD model (GPT, Claude, Gemini, ...), which is not trained for the grid of the built-in model: the box is asked for as fractions of the
+// picture, and the size of the picture is told. cloud-vlm.js reads the answer in whatever coordinate system it comes. phrase has been cleaned by reconcile()
+// (letters, digits, spaces, ' and - only), so it cannot carry instructions of its own.
+function cloudGroundingPrompt(phrase, position, size) {
+  const where = WHERE[position] || 'in this image';
+  const dims = size && size.width > 0 && size.height > 0 ? ' The image is ' + size.width + ' pixels wide and ' + size.height + ' pixels high.' : '';
+  return 'Locate the ' + phrase + ' ' + where + '.' + dims
+    + ' Reply with only JSON in this format: [{"bbox":[x1,y1,x2,y2],"label":"' + phrase + '"}], one entry for each ' + phrase + ' that is visible.'
+    + ' x1,y1 is the top-left corner and x2,y2 the bottom-right corner of the box around the whole ' + phrase + ', as fractions of the image width and height between 0 and 1'
+    + ' (0,0 is the top-left corner of the image, 1,1 the bottom-right corner). If there is no ' + phrase + ' in the image, reply with [].';
+}
+
+module.exports = { reconcile, presencePrompt, groundingPrompt, cloudGroundingPrompt, fold, POSITIONS, wordsIn, writtenPositions, POSITION_WORDS, COLOR_WORDS };

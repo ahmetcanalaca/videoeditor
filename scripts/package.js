@@ -164,6 +164,11 @@ function writeExtras(appDir) {
   ].join('\r\n'), 'utf8');
   const readme = path.join(ROOT, 'README.md');
   if (fs.existsSync(readme)) fs.copyFileSync(readme, path.join(appDir, 'README.md'));
+  // licence texts: the project's own (the LICENSE next to the exe is Electron's) and the notices of what is inside the package; a build without them must not be handed out
+  for (const [from, to] of [['LICENSE', 'LICENSE-VideoEditor.txt'], ['THIRD-PARTY-NOTICES.txt', 'THIRD-PARTY-NOTICES.txt']]) {
+    if (!fs.existsSync(path.join(ROOT, from))) throw new Error(from + ' is missing: it has to travel with the package');
+    fs.copyFileSync(path.join(ROOT, from), path.join(appDir, to));
+  }
   // The user guide (TR + EN) travels next to the exe, together with the screenshots it links to.
   const guide = path.join(ROOT, 'KULLANIM-KILAVUZU-USER-GUIDE.md');
   if (fs.existsSync(guide)) {
@@ -218,7 +223,8 @@ async function main() {
     quiet: true,
     icon: path.join(ROOT, 'assets', 'icon.ico'),
     extraResource: [binDir, llamaDir],
-    ignore: [/^\/node_modules($|\/)/, /^\/tests($|\/)/, /^\/scripts($|\/)/, /^\/assets($|\/)/, /^\/docs($|\/)/, /^\/installer($|\/)/, /^\/vendor($|\/)/, /^\/web($|\/)/, /^\/dist($|\/)/, /^\/build($|\/)/, /^\/\.gitignore$/, /^\/package-lock\.json$/, /^\/README\.md$/, /^\/KULLANIM-KILAVUZU-USER-GUIDE\.md$/],
+    // allow-list: only package.json and src/ go into app.asar, so a new file in the project folder (a note, an .env) can never be packed by accident
+    ignore: (p) => !/^(\/?|\/package\.json|\/src(\/.*)?)$/.test(String(p).replace(/\\/g, '/')),
     win32metadata: {
       CompanyName: 'Video Editor',
       FileDescription: 'Video Editör',

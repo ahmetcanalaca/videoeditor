@@ -41,6 +41,8 @@ const MODULES = [
   'src/main/perception/scan',
   'src/main/perception/frames',
   'src/main/perception/vlm',
+  'src/main/perception/cloud-vlm',
+  'src/main/perception/locate',
   'src/main/perception/index',
   'src/main/llm/catalog',
 ];
@@ -60,6 +62,8 @@ const EXPORTS = {
   perceptionScan: 'src/main/perception/scan',
   perceptionFrames: 'src/main/perception/frames',
   perceptionVlm: 'src/main/perception/vlm',
+  perceptionCloudVlm: 'src/main/perception/cloud-vlm',
+  perceptionLocate: 'src/main/perception/locate',
   perception: 'src/main/perception/index',
   llmCatalog: 'src/main/llm/catalog',
 };
