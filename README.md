@@ -70,7 +70,7 @@ Sunucuyu uygulama gerektiğinde başlatır (30 dakika kullanılmazsa kapanır). 
 
 1. Foundry Local'i kurun ve modeli bir kez indirin: `winget install Microsoft.FoundryLocal`, sonra `foundry model download qwen3.5-4b`.
 2. Web sürümünde **AI** → ⚙ → Sağlayıcı: **Foundry Local**. Dört adım sırayla kendiliğinden yeşile döner: **eklenti** (panel zip'i indirtir; `edge://extensions` → Geliştirici modu → *Paketlenmemiş öğe yükle*) → **izin** (eklentinin kendi penceresinde, siteye bir kez) → **Foundry Local** (`foundry server start`; port değişirse *Otomatik bul*) → **model** (`qwen3.5-4b` yazıp *Yükle ve kullan*).
-3. Hazır: *"köpeği yakınlaştır"* gibi komutlar çalışır. Her şey bu bilgisayarda kalır; eklenti yalnızca bu siteden gelen dört bilinen isteği `127.0.0.1`'e iletir ([ayrıntı ve güvenlik](web/extension/README.md)). Şirket bilgisayarında Geliştirici modu kapalıysa BT biriminden eklentiyi onaylamasını isteyin ya da Windows uygulamasını kullanın.
+3. Hazır: *"köpeği yakınlaştır"* gibi komutlar çalışır. Her şey bu bilgisayarda kalır; eklenti yalnızca bu siteden gelen dört bilinen isteği `127.0.0.1`'e iletir ([ayrıntı ve güvenlik](web/extension/README.md)). İndirdiğiniz zip'in SHA-256'sı, siteden bağımsız olarak [eklenti sürümünün notunda](https://github.com/ahmetcanalaca/videoeditor/releases/tag/foundry-bridge-v1.0.0) da yazar (panel `Get-FileHash` komutunu gösterir). Şirket bilgisayarında Geliştirici modu kapalıysa BT biriminden eklentiyi onaylamasını isteyin ya da Windows uygulamasını kullanın.
 
 <p align="center">
   <img src="docs/screenshots/web-10-foundrylocal-ready-tr-dark.png" alt="Web sürümünde Foundry Local: dört adım yeşil" width="49%">
@@ -162,7 +162,7 @@ The app starts the server when needed (it stops after 30 minutes without use). D
 
 1. Install Foundry Local and download the model once: `winget install Microsoft.FoundryLocal`, then `foundry model download qwen3.5-4b`.
 2. In the web edition press **AI** → ⚙ → Provider: **Foundry Local**. Four steps turn green one after the other: **extension** (the panel offers the zip; `edge://extensions` → Developer mode → *Load unpacked*) → **permission** (once per site, in the extension's own window) → **Foundry Local** (`foundry server start`; *Find automatically* if the port changed) → **model** (type `qwen3.5-4b`, press *Load and use*).
-3. Ready: commands such as *"zoom in on the dog"* work. Everything stays on this computer; the extension only passes four known requests from this site to `127.0.0.1` ([details and security](web/extension/README.md)). If Developer mode is switched off on a company computer, ask IT to approve the extension or use the Windows app.
+3. Ready: commands such as *"zoom in on the dog"* work. Everything stays on this computer; the extension only passes four known requests from this site to `127.0.0.1` ([details and security](web/extension/README.md)). The SHA-256 of the zip you downloaded is also written, independently of the site, in the [release notes of the extension](https://github.com/ahmetcanalaca/videoeditor/releases/tag/foundry-bridge-v1.0.0) (the panel shows the `Get-FileHash` command). If Developer mode is switched off on a company computer, ask IT to approve the extension or use the Windows app.
 
 <p align="center">
   <img src="docs/screenshots/web-09-ai-settings-foundrylocal-en-light.png" alt="Foundry Local in the web edition: four steps green" width="49%">
