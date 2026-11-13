@@ -41,9 +41,9 @@ jobs:
       - name: The copies of the desktop code are current
         working-directory: web
         run: node scripts/sync-desktop.js --check
-      - name: Audio DSP, assistant core and browser extension (rules, manifest, package) unit tests
+      - name: Audio DSP, assistant core, in-browser assistant (catalogue, checked downloads, requests), vendored libraries (declared patches) and browser extension (rules, manifest, package) unit tests
         working-directory: web
-        run: node tests/audio-dsp.test.js && node tests/ai-core.test.js && node tests/ext-policy.test.js
+        run: node tests/audio-dsp.test.js && node tests/ai-core.test.js && node tests/ib-core.test.js && node tests/vendor.test.js && node tests/ext-policy.test.js
       - name: Build the site
         working-directory: web
         run: node scripts/build.js

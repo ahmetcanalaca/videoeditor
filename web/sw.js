@@ -10,7 +10,9 @@
 //      scripts/build.js wrote into this script (see MANIFEST_SHA256). Browsers isolate by ORIGIN, not by path, and every GitHub Pages site of an account
 //      shares one origin: a page of another repository of the same account could write into Cache Storage. It cannot change the script of an
 //      installed worker, so a poisoned cache entry is detected, dropped and replaced by the file from the network. What is served is made again from the
-//      bytes that were checked (the status and the headers of a stored entry are not covered by the hash), and a damaged cache is filled again (repair()).
+//      bytes that were checked (the status and the headers of a stored entry are not covered by the hash), and a damaged cache is filled again (repair()). The code of
+//      the in-browser model feature (js/web/ai/inbrowser/) and the libraries that run its model are guarded further (see GUARDED): they are served only with the manifest's
+//      bytes, from the cache and from the network alike, and an address of this scope that is not written the plain way is a 404 for every file (see NOT_PLAIN).
 // It never touches requests to other origins (the assistant's requests to a model server or a cloud API): those go from the network worker straight to the network.
 const BUILD = '__BUILD_ID__'; // replaced by scripts/build.js; "dev" when served from the source tree
 const MANIFEST_SHA256 = '__MANIFEST_SHA256__'; // replaced by scripts/build.js: SHA-256 of precache-manifest.json
@@ -20,6 +22,9 @@ const CHECK = /^[0-9a-f]{64}$/.test(MANIFEST_SHA256) || !/^(localhost|127\.0\.0\
 const CACHE_PREFIX = 've-shell-';
 const CACHE = CACHE_PREFIX + BUILD;
 const MANIFEST = 'precache-manifest.json';
+// The libraries of the in-browser assistant (a WebAssembly file of 26 MB among them) are listed in the manifest apart ("lazy"): they are not fetched when the site is
+// installed, but the first time a page asks for them, checked against the manifest's SHA-256 and kept here (one cache for all builds: every use checks the hash again).
+const LAZY_CACHE = 've-lazy';
 
 // Same policy as the <meta> tag of index.html, plus what only a header can say. The page itself may talk to its own origin only: every request of the
 // assistant goes through the network worker (js/web/ai/net-worker.js), which gets its own, per-user policy below.
@@ -78,6 +83,42 @@ async function workerResponse(response) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+// The two workers of the in-browser assistant, each with a policy of its own (a worker's policy is the one its script came with):
+//  - the download worker fetches the model files: this site and Hugging Face (huggingface.co, and the content network *.hf.co the files are redirected to), nothing
+//    else, and no WebAssembly - it runs no model and no library;
+//  - the engine worker runs the model (the vendored transformers.js and ONNX Runtime Web: WebAssembly): this site only, so that nothing it runs can talk to anybody,
+//    and no further workers.
+const IB_DIR = 'js/web/ai/inbrowser/';
+const IB_WORKERS = {
+  [IB_DIR + 'ib-dl-worker.js']: ["default-src 'none'", "script-src 'self'", "connect-src 'self' https://huggingface.co https://*.hf.co", "worker-src 'none'"].join('; '),
+  [IB_DIR + 'ib-engine-worker.js']: ["default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "connect-src 'self'", "worker-src 'none'"].join('; '),
+};
+// The code of the in-browser model feature (js/web/ai/inbrowser/) and the libraries that run the model are only ever served as the manifest names them: under exactly the address it names and with
+// exactly its bytes - from the cache, and from the network too (a cache entry that is missing or not the checked one is no reason to pass on whatever the network says).
+// Another letter case of such an address is a 404, and while there is no checked manifest (the cache was emptied or damaged) they are not served from the network at all:
+// the cache is filled again first (repair()).
+const GUARDED = ['vendor/transformers/', 'vendor/onnxruntime-web/', IB_DIR];
+function guarded(rel) {
+  let plain;
+  try { plain = decodeURIComponent(rel).toLowerCase(); } catch (e) { return true; }
+  return GUARDED.some((p) => plain.startsWith(p));
+}
+const plainResponse = (status, text) => new Response(text, { status, headers: { 'Content-Type': 'text/plain' } });
+// A static host serves one file under more than one spelling of its address: a doubled slash (js//app.js - also right behind the scope: //js/app.js), a %-escape (js%2Fapp.js,
+// ..%2F), a backslash. Everything this worker decides is tied to the plain address (the policy of a worker script, the manifest check, GUARDED), so a request of this scope
+// whose address is not written the plain way is answered with a 404 here - for every file and for the page - instead of being handed to the network: nothing inside the scope can
+// be reached around its checks. (An address outside the scope, such as a doubled slash in front of the folder name, is not this worker's request at all.) No published file has
+// such a name (scripts/build.js refuses to publish one).
+const NOT_PLAIN = /%|\\|\/\/|^\/|(^|\/)\.{1,2}(\/|$)/;
+
+function ibWorkerResponse(response, csp) {
+  const headers = new Headers(response.headers);
+  headers.set('Content-Security-Policy', csp);
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 function withHeaders(response) {
   const headers = new Headers(response.headers);
   Object.keys(HEADERS).forEach((k) => headers.set(k, HEADERS[k]));
@@ -90,8 +131,8 @@ async function sha256Hex(buffer) {
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buffer)), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// url -> SHA-256 of the files this build may serve, or null when the cached manifest is not the one this worker was built with (the cache is then
-// thrown away: nothing in it can be trusted). Read once per start of the worker.
+// url -> SHA-256 of the files this build may serve (and, apart, of the lazy ones), or null when the cached manifest is not the one this worker was built with (the
+// cache is then thrown away: nothing in it can be trusted). Read once per start of the worker. -> { files: Map(url -> sha256), lazy: Map(url -> { sha256, bytes }) }
 let manifestPromise = null;
 function trustedManifest() {
   if (!manifestPromise) {
@@ -101,9 +142,12 @@ function trustedManifest() {
       if (!res) return null;
       const text = await res.text();
       if ((await sha256Hex(new TextEncoder().encode(text))) !== MANIFEST_SHA256) { await caches.delete(CACHE); return null; }
-      const map = new Map();
-      for (const f of (JSON.parse(text).files || [])) if (f && typeof f.url === 'string' && /^[0-9a-f]{64}$/.test(f.sha256)) map.set(f.url, f.sha256);
-      return map;
+      const parsed = JSON.parse(text);
+      const files = new Map();
+      for (const f of (parsed.files || [])) if (f && typeof f.url === 'string' && /^[0-9a-f]{64}$/.test(f.sha256)) files.set(f.url, f.sha256);
+      const lazy = new Map();
+      for (const f of (parsed.lazy || [])) if (f && typeof f.url === 'string' && /^[0-9a-f]{64}$/.test(f.sha256) && Number.isSafeInteger(f.bytes) && f.bytes > 0) lazy.set(f.url, { sha256: f.sha256, bytes: f.bytes });
+      return { files, lazy };
     })().catch(() => null);
   }
   return manifestPromise;
@@ -115,19 +159,52 @@ const TYPES = {
   ico: 'image/x-icon', wasm: 'application/wasm', txt: 'text/plain; charset=utf-8',
 };
 
-// The cached file, made again from the bytes that were checked, or null when it is not exactly the file the manifest names (nothing is checked in a source
-// tree). Never the stored object itself: only its body is covered by the hash, so a stored status or header (a 302 with a Location, a wrong Content-Type)
-// could still make the browser follow a redirect to another page of this origin, or read the file as something else.
-async function verified(rel, response) {
-  const bytes = await response.arrayBuffer();
-  if (CHECK) {
-    const map = await trustedManifest();
-    const want = map && map.get(rel);
-    if (!want || (await sha256Hex(bytes)) !== want) return null;
-  }
+// A fresh response of the right type made from bytes that were checked (never the stored object itself: only its body is covered by the hash, so a stored status or
+// header - a 302 with a Location, a wrong Content-Type - could still make the browser follow a redirect to another page of this origin, or read the file as something else).
+function typed(rel, bytes) {
   const dot = rel.lastIndexOf('.');
   const type = TYPES[dot > 0 ? rel.slice(dot + 1).toLowerCase() : ''] || (/(^|\/)LICENSE$/.test(rel) ? TYPES.txt : 'application/octet-stream');
   return new Response(bytes, { status: 200, headers: { 'Content-Type': type } });
+}
+
+// The cached file, made again from the bytes that were checked, or null when it is not exactly the file the manifest names (nothing is checked in a source tree).
+async function verified(rel, response) {
+  const bytes = await response.arrayBuffer();
+  if (CHECK) {
+    const m = await trustedManifest();
+    const want = m && m.files.get(rel);
+    if (!want || (await sha256Hex(bytes)) !== want) return null;
+  }
+  return typed(rel, bytes);
+}
+
+// A guarded file whose cache entry was missing or not the checked one (see GUARDED): what the network answers is served only when it is the manifest's file, made again from
+// the bytes that were checked; anything else (a half-deployed site, somebody in between) is a 502, as for a lazy file.
+async function guardedFromNetwork(rel, res) {
+  const m = await trustedManifest();
+  const want = m && m.files.get(rel);
+  const bytes = await res.arrayBuffer();
+  if (!want || (await sha256Hex(bytes)) !== want) return plainResponse(502, 'This file does not match the manifest of this build');
+  return typed(rel, bytes);
+}
+
+// A lazy file (see LAZY_CACHE): from the cache when its bytes are the manifest's, else from the network - and kept only when they are. A file that is not the
+// manifest's (a half-deployed site, a poisoned entry, somebody in between) is never served: the answer is a 502.
+async function lazyAsset(rel, info, key) {
+  const cache = await caches.open(LAZY_CACHE);
+  const hit = await cache.match(key, { ignoreVary: true });
+  if (hit) {
+    const bytes = await hit.arrayBuffer();
+    if (bytes.byteLength === info.bytes && (await sha256Hex(bytes)) === info.sha256) return typed(rel, bytes);
+    try { await cache.delete(key, { ignoreVary: true }); } catch (e) { /* replaced below */ }
+  }
+  let res;
+  try { res = await fetch(key, { cache: 'reload' }); } catch (e) { return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } }); }
+  if (!res.ok) return new Response('HTTP ' + res.status, { status: 502, headers: { 'Content-Type': 'text/plain' } });
+  const bytes = await res.arrayBuffer();
+  if (bytes.byteLength !== info.bytes || (await sha256Hex(bytes)) !== info.sha256) return new Response('This file does not match the manifest of this build', { status: 502, headers: { 'Content-Type': 'text/plain' } });
+  try { await cache.put(key, new Response(bytes, { headers: { 'Content-Type': 'application/octet-stream' } })); } catch (e) { /* no room: served, not kept */ }
+  return typed(rel, bytes);
 }
 
 // Fetch every file of the manifest past the HTTP cache, compare it with its hash and keep it. One missing or different file, or a manifest that is not the
@@ -168,6 +245,15 @@ self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const names = await caches.keys();
     await Promise.all(names.filter((n) => n.startsWith(CACHE_PREFIX) && n !== CACHE).map((n) => caches.delete(n)));
+    // lazy files this build does not list any more (an older version of a library) are dropped
+    try {
+      const m = await trustedManifest();
+      if (m) {
+        const lazyCache = await caches.open(LAZY_CACHE);
+        const base = new URL(self.registration.scope).pathname;
+        for (const req of await lazyCache.keys()) if (!m.lazy.has(new URL(req.url).pathname.slice(base.length))) await lazyCache.delete(req);
+      }
+    } catch (e) { /* cleaned up at the next update */ }
     await self.clients.claim();
   })());
 });
@@ -186,6 +272,8 @@ self.addEventListener('fetch', (event) => {
   if (!url.pathname.startsWith(scope.pathname)) return;
   // the manifest itself is never served from (or deleted out of) the cache; the worker script is the browser's own business
   if (url.pathname === scope.pathname + MANIFEST || url.pathname === scope.pathname + 'sw.js') return;
+  const plain = url.pathname.slice(scope.pathname.length);
+  if (NOT_PLAIN.test(plain)) { event.respondWith(plainResponse(404, 'Not found')); return; }
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     // the editor is the only page: the scope root and index.html (any other address is left to the network and its 404)
@@ -193,22 +281,40 @@ self.addEventListener('fetch', (event) => {
     const isNetWorker = url.pathname === scope.pathname + NET_WORKER;
     // the file as the manifest names it (no query string, relative to the scope), looked up by exactly that address: an entry that somebody added under a
     // query string is never looked at
-    const rel = isPage ? 'index.html' : url.pathname.slice(scope.pathname.length);
+    const rel = isPage ? 'index.html' : plain;
     const key = new URL(rel, scope).href;
+    // the workers of the in-browser assistant carry a policy of their own
+    const ibCsp = Object.prototype.hasOwnProperty.call(IB_WORKERS, rel) ? IB_WORKERS[rel] : '';
+    const forScript = (res) => (isNetWorker ? workerResponse(res) : (ibCsp ? ibWorkerResponse(res, ibCsp) : res));
+    // a file of the lazy list: not in the precache, checked against the manifest when it is first used (never for a source tree, which has no manifest); and the files of the
+    // in-browser assistant that are guarded (see GUARDED) are served in no other way
+    if (CHECK && !isPage) {
+      const m = await trustedManifest();
+      const info = m && m.lazy.get(rel);
+      if (info) return lazyAsset(rel, info, key);
+      if (guarded(rel)) {
+        if (!m) { event.waitUntil(repair()); return plainResponse(503, 'Not available right now'); }
+        if (!m.files.has(rel)) return plainResponse(404, 'Not found');
+      }
+    }
     const hit = await cache.match(key, { ignoreVary: true });
     const fresh = hit ? await verified(rel, hit) : null;
-    if (fresh) return isPage ? withHeaders(fresh) : (isNetWorker ? workerResponse(fresh) : fresh);
+    if (fresh) return isPage ? withHeaders(fresh) : forScript(fresh);
     if (CHECK) {
       // not the checked file (or no checked manifest, or a file of the manifest that is missing): the entry goes, the cache is filled again, and this request is
       // answered from the network
       if (hit) { try { await cache.delete(key, { ignoreVary: true }); } catch (e) { /* the entry is not used anyway */ } }
-      const map = await trustedManifest();
-      if (hit || !map || map.has(rel)) event.waitUntil(repair());
+      const m = await trustedManifest();
+      if (hit || !m || m.files.has(rel)) event.waitUntil(repair());
     }
     try {
       // from the network: what the site itself serves (never kept in the cache here, only the install puts files there)
       const res = await fetch(req);
-      return isPage ? withHeaders(res) : (isNetWorker && res.ok ? workerResponse(res) : res);
+      if (CHECK && !isPage && res.ok && guarded(rel)) {
+        const checked = await guardedFromNetwork(rel, res);
+        return checked.ok ? forScript(checked) : checked;
+      }
+      return isPage ? withHeaders(res) : (res.ok ? forScript(res) : res);
     } catch (e) {
       if (isPage) return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
       throw e;

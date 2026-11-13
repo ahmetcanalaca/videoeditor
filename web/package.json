@@ -1,18 +1,20 @@
 {
   "name": "video-editor-web",
   "productName": "Video Editör (web)",
-  "version": "4.3.0",
+  "version": "4.4.0",
   "private": true,
   "homepage": "https://ahmetcanalaca.github.io/videoeditor/",
   "repository": { "type": "git", "url": "https://github.com/ahmetcanalaca/videoeditor.git" },
-  "description": "Static web edition of Video Editör: the same editor, running entirely in the browser (WebCodecs + Mediabunny). The optional AI assistant uses a cloud provider with the user's own key, Foundry Local on the user's own computer (through a small browser extension that the user installs), or a model server on the user's own computer that allows browsers (Ollama, LM Studio).",
+  "description": "Static web edition of Video Editör: the same editor, running entirely in the browser (WebCodecs + Mediabunny). The optional AI assistant runs a model in the browser itself on the graphics card (WebGPU, nothing to install: only the model files are downloaded), uses a cloud provider with the user's own key, Foundry Local on the user's own computer (through a small browser extension that the user installs), or a model server on the user's own computer that allows browsers (Ollama, LM Studio).",
   "scripts": {
     "serve": "node scripts/serve.js",
     "build": "node scripts/build.js",
     "sync": "node scripts/sync-desktop.js",
     "vendor:verify": "node scripts/vendor.js verify",
     "pack:extension": "node scripts/pack-extension.js",
-    "test": "node tests/audio-dsp.test.js && node tests/ai-core.test.js && node tests/ext-policy.test.js && node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/cu.test.js && node tests/locate.test.js && node tests/lna.test.js && node tests/fl-bridge.test.js && node tests/fl-web.test.js && node tests/export.test.js && node tests/pwa.test.js"
+    "ib:lock": "node scripts/ib-model-lock.js",
+    "ib:check": "node scripts/ib-model-lock.js --check",
+    "test": "node tests/audio-dsp.test.js && node tests/ai-core.test.js && node tests/ib-core.test.js && node tests/vendor.test.js && node tests/ext-policy.test.js && node tests/smoke.test.js && node tests/ui.test.js && node tests/ai.test.js && node tests/ib-web.test.js && node tests/cu.test.js && node tests/locate.test.js && node tests/lna.test.js && node tests/fl-bridge.test.js && node tests/fl-web.test.js && node tests/export.test.js && node tests/pwa.test.js"
   },
   "license": "MIT"
 }

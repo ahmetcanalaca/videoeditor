@@ -8,21 +8,22 @@
   const t = (key, vars) => VE.i18n.t(key, vars);
   const api = window.api;
 
-  // (the desktop app's "builtin" - the model it downloads and starts itself - does not exist in the browser; "foundrylocal" has its own setup panel, see buildSettings)
-  const PROVIDERS = ['foundrylocal', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
-  const PROV_KEYS = { foundrylocal: 'aiset.prov.foundrylocal', openai: 'aiset.prov.openai', azure: 'aiset.prov.azure', foundry: 'aiset.prov.foundry', anthropic: 'aiset.prov.anthropic', gemini: 'aiset.prov.gemini', local: 'aiset.prov.local' };
-  const HINT_KEYS = { foundrylocal: 'aiset.hint.foundrylocal', openai: 'aiset.hint.openai', azure: 'aiset.hint.azure', foundry: 'aiset.hint.foundry', anthropic: 'aiset.hint.anthropic', gemini: 'aiset.hint.gemini', local: 'aiset.hint.local' };
+  // (the desktop app's "builtin" - the model it downloads and starts itself - does not exist in the browser; "foundrylocal" and "inbrowser" have their own setup panels, see buildSettings)
+  const PROVIDERS = ['inbrowser', 'foundrylocal', 'openai', 'azure', 'foundry', 'anthropic', 'gemini', 'local'];
+  const PROV_KEYS = { inbrowser: 'aiset.prov.inbrowser', foundrylocal: 'aiset.prov.foundrylocal', openai: 'aiset.prov.openai', azure: 'aiset.prov.azure', foundry: 'aiset.prov.foundry', anthropic: 'aiset.prov.anthropic', gemini: 'aiset.prov.gemini', local: 'aiset.prov.local' };
+  const HINT_KEYS = { inbrowser: 'aiset.hint.inbrowser', foundrylocal: 'aiset.hint.foundrylocal', openai: 'aiset.hint.openai', azure: 'aiset.hint.azure', foundry: 'aiset.hint.foundry', anthropic: 'aiset.hint.anthropic', gemini: 'aiset.hint.gemini', local: 'aiset.hint.local' };
   const AUTH_KEYS = { key: 'aiset.auth.key', entra: 'aiset.auth.entra' };
   const URL_HINT = {
-    foundrylocal: '', openai: 'https://api.openai.com/v1', azure: 'https://RESOURCE.openai.azure.com', foundry: 'https://RESOURCE.services.ai.azure.com/api/projects/PROJECT',
+    inbrowser: '', foundrylocal: '', openai: 'https://api.openai.com/v1', azure: 'https://RESOURCE.openai.azure.com', foundry: 'https://RESOURCE.services.ai.azure.com/api/projects/PROJECT',
     anthropic: 'https://api.anthropic.com', gemini: 'https://generativelanguage.googleapis.com', local: 'http://127.0.0.1:11434/v1',
   };
-  const MODEL_HINT = { foundrylocal: '', openai: 'gpt-4o-mini', azure: 'my-deployment', foundry: 'my-deployment', anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-flash', local: 'qwen2.5:3b' };
+  const MODEL_HINT = { inbrowser: '', foundrylocal: '', openai: 'gpt-4o-mini', azure: 'my-deployment', foundry: 'my-deployment', anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-flash', local: 'qwen2.5:3b' };
   // problems the user can fix in the settings dialog (the error card then offers a shortcut)
   const FIXABLE = ['AUTH', 'FORBIDDEN', 'NO_KEY', 'NOT_CONFIGURED', 'KEY_MISMATCH', 'NOT_FOUND', 'NO_TOOLS', 'URL', 'URL_EMPTY', 'URL_INVALID', 'URL_SCHEME', 'URL_CREDENTIALS', 'URL_NOT_LOCAL',
     'ENTRA_NOT_CONFIRMED', 'ENDPOINT_NOT_CONFIRMED',
     'CU_NO_ENDPOINT', 'CU_ORIGIN_MISMATCH', 'CU_NOT_CONFIRMED', 'CU_URL_INVALID', 'CU_URL_SCHEME', 'CU_URL_CREDENTIALS', 'CU_ANALYZER_INVALID', 'CU_NO_ANALYZER', 'CU_NO_DEFAULTS', 'CU_LOCATION',
-    'FL_NO_BRIDGE', 'FL_BRIDGE_OLD', 'FL_NOT_APPROVED', 'FL_NOT_FOUND', 'FL_LOAD_FAILED', 'FL_NOT_DOWNLOADED', 'FL_BAD_MODEL'];
+    'FL_NO_BRIDGE', 'FL_BRIDGE_OLD', 'FL_NOT_APPROVED', 'FL_NOT_FOUND', 'FL_LOAD_FAILED', 'FL_NOT_DOWNLOADED', 'FL_BAD_MODEL',
+    'IB_INSECURE', 'IB_NO_WEBGPU', 'IB_NO_F16', 'IB_NOT_INSTALLED', 'IB_DOWNLOAD_FAILED', 'IB_NO_SPACE', 'IB_CORRUPT', 'IB_LOAD_FAILED', 'IB_BAD_MODEL', 'IB_WORKER'];
   const EXAMPLES = ['ai.ex1', 'ai.ex2', 'ai.ex3', 'ai.ex4', 'ai.ex5'];
   // what the assistant can do with the video's CONTENT (a Foundry Local model that looks at pictures)
   const VISION_EXAMPLES = ['ai.exv1', 'ai.exv2', 'ai.exv3'];
@@ -214,7 +215,13 @@
     let label = t('ai.working');
     let ratio = null;
     if (live.phase === 'starting' || live.phase === 'loading') { const key = 'ai.fl.' + live.phase; label = t(key); }
-    else if (live.analysis) {
+    // the model in this tab: reading it into memory, loading it onto the graphics card, getting the card ready (shown until the first real step arrives)
+    else if (live.phase === 'ibload' && live.ib && ['read', 'init', 'warm'].includes(live.ib.step)) {
+      const total = live.ib.total || 0;
+      const done = Math.min(live.ib.loaded || 0, total);
+      label = t('ai.ib.' + live.ib.step, { pct: total ? Math.floor((done / total) * 100) : 0 });
+      if (live.ib.step === 'read' && total > 0) ratio = done / total;
+    } else if (live.analysis) {
       label = analysisLabel(live.analysis);
       if (live.analysis.phase === 'prepare') ratio = live.analysis.fraction || 0;
     } else if (s) {
@@ -354,9 +361,11 @@
     renderAll();
     const off = api.on('ai:step', (ev) => {
       if (!ev || ev.runId !== runId || !state.live) return;
-      // Foundry Local: loading the model (shown until the first real step arrives)
-      if (ev.kind === 'phase') state.live.phase = ev.phase === 'starting' || ev.phase === 'loading' ? ev.phase : null;
-      else state.live.phase = null;
+      // Foundry Local: loading the model (shown until the first real step arrives); the model in this tab: reading / loading it (ibload, with the step and its progress)
+      if (ev.kind === 'phase') {
+        state.live.phase = ev.phase === 'starting' || ev.phase === 'loading' || (ev.phase === 'ibload' && ev.step !== 'ready') ? ev.phase : null;
+        state.live.ib = ev.phase === 'ibload' ? { step: ev.step, loaded: ev.loaded, total: ev.total } : null;
+      } else state.live.phase = null;
       if (ev.kind === 'action') state.live.actions.push(ev.action);
       else if (ev.kind === 'reset') state.live.actions = [];
       else if (ev.kind === 'search') state.live.search = ev.phase === 'done' ? null : { object: ev.object, position: ev.position, phase: ev.phase, done: ev.done, total: ev.total };
@@ -463,9 +472,10 @@
     const keyHint = el('div', { class: 'hint' });
     const canEntra = () => provider.value === 'azure' || provider.value === 'foundry';
     const entra = () => canEntra() && auth.value === 'entra';
-    // Foundry Local brings its own panel (the steps to connect it) instead of an address, a model name and a key
+    // Foundry Local and the model in this tab bring their own panel (the steps to connect / download it) instead of an address, a model name and a key
     const fl = () => provider.value === 'foundrylocal';
-    const panelled = () => fl();
+    const ib = () => provider.value === 'inbrowser';
+    const panelled = () => fl() || ib();
 
     const syncAuth = () => {
       // web edition: "entra" is an access token that is pasted like a key (there is no Azure CLI in a browser), so the key row stays
@@ -491,9 +501,10 @@
       find.hidden = p !== 'local';
       found.hidden = found.hidden || p !== 'local';
       if (fl()) { ensureFlPanel(); if (!flWrap.isConnected) grid.after(flWrap); } else flWrap.remove();
+      if (ib()) { ensureIbPanel(); if (!ibWrap.isConnected) grid.after(ibWrap); } else ibWrap.remove();
       shareRow.hidden = panelled();
-      note.hidden = fl();
-      warn.hidden = fl() || status.encryptionAvailable !== false;
+      note.hidden = panelled();
+      warn.hidden = panelled() || status.encryptionAvailable !== false;
       if (!canEntra()) auth.value = 'key';
       syncAuth();
       syncCu(state.status || status);
@@ -520,6 +531,21 @@
       });
       flWrap.append(flPanel.node);
       return flPanel;
+    };
+
+    // the model in this tab: download, load and try it (see js/web/ai/inbrowser/ibpanel.js); made the first time it is chosen
+    let ibPanel = null;
+    const ibWrap = el('div', { class: 'llm-wrap', 'data-ib': 'wrap' });
+    const ensureIbPanel = () => {
+      if (ibPanel) return ibPanel;
+      ibPanel = VE.web.ibPanel.panel({
+        getStatus: () => state.status || status,
+        say,
+        errorText,
+        onUsed: (st2) => { if (st2) { state.status = st2; renderAll(); } },
+      });
+      ibWrap.append(ibPanel.node);
+      return ibPanel;
     };
 
     const grid = el('div', { class: 'form-grid' }, [
@@ -649,6 +675,13 @@
         await flPanel.apply();
         return;
       }
+      if (ib()) {
+        // the model in this tab: downloaded, loaded and tried by the panel ("Download and use"); the dialog's button does the same
+        saveBtn.disabled = false; clear.disabled = false;
+        if (!ibPanel || !ibPanel.getModel()) { say('err', t('ibw.pickFirst')); return; }
+        await ibPanel.apply();
+        return;
+      }
       const cuReq = provider.value === 'foundry' ? { enabled: cuOn.checked, endpoint: cuEndpoint.value, analyzer: cuAnalyzer.value, location: cuLocation.value } : undefined;
       const saved = await api.ai.save({ provider: provider.value, baseUrl: url.value, model: model.value, apiVersion: version.value, shareNames: share.checked, auth: auth.value, apiKey: key.value, cu: cuReq });
       // a rejected save keeps what was typed so it can be corrected; the secret leaves the DOM as soon as the main process has it
@@ -691,8 +724,8 @@
     key.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveAndTest(); } });
 
     const body = el('div', { style: { display: 'contents' } }, [providerHint, grid, found, models, keyHint, authHint, shareRow, warn, cuWrap, note, result]);
-    syncProvider(); // again, now that the dialog has a place to put the Foundry Local panel
-    VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn], onClose: () => { if (flPanel) flPanel.destroy(); } });
+    syncProvider(); // again, now that the dialog has a place to put the Foundry Local / in-browser panel
+    VE.modal.open({ title: t('aiset.title'), body, footer: [clear, el('span', { class: 'spacer' }), closeBtn, saveBtn], onClose: () => { if (flPanel) flPanel.destroy(); if (ibPanel) ibPanel.destroy(); } });
   }
 
   /* ---------- wiring ---------- */

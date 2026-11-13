@@ -11,6 +11,9 @@ const { spawnSync } = require('child_process');
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
+// The files that are not precached but fetched on demand (and checked against the manifest, see sw.js): the libraries of the in-browser assistant.
+const LAZY_RE = /^vendor\/(transformers|onnxruntime-web)\//;
+
 function walk(dir) {
   const out = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -75,15 +78,25 @@ function build(opts) {
     }
   }
 
-  // 3. the precache list: every file of the application
+  // 3. the precache list: every file of the application, except the libraries of the in-browser assistant (a few MB of code and a 26 MB WebAssembly file that only that
+  //    feature needs): those are listed apart ("lazy"), fetched by the service worker when a page asks for them, and checked against the same manifest
   const swSrc = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
   if (!swSrc.includes("'__BUILD_ID__'")) throw new Error('sw.js has no __BUILD_ID__ placeholder');
   if (!swSrc.includes("'__MANIFEST_SHA256__'")) throw new Error('sw.js has no __MANIFEST_SHA256__ placeholder');
-  const files = copied.slice().sort().map((url) => ({ url, sha256: sha256(fs.readFileSync(path.join(OUT, url))) }));
+  // the worker answers every address of its scope that is not written the plain way with a 404 (NOT_PLAIN in sw.js), and it sees an address as the browser writes it: a file whose name
+  // needs escaping (a space, a non-ASCII letter, a # or ?) arrives as %-escapes. A published file that would be refused for either reason could not be reached.
+  const plainRule = /const NOT_PLAIN = \/(.+)\/;/.exec(swSrc);
+  if (!plainRule) throw new Error('sw.js has no NOT_PLAIN rule');
+  const notPlain = new RegExp(plainRule[1]);
+  const refused = copied.filter((url) => { const seen = new URL(url, 'https://h/s/').pathname.slice('/s/'.length); return seen !== url || notPlain.test(seen); });
+  if (refused.length) throw new Error('these published names would be refused by the service worker (they need escaping in an address, or look like a spelling it refuses, see NOT_PLAIN in sw.js): ' + refused.join(', '));
+  const entries = copied.slice().sort().map((url) => ({ url, sha256: sha256(fs.readFileSync(path.join(OUT, url))), bytes: fs.statSync(path.join(OUT, url)).size }));
+  const files = entries.filter((e) => !LAZY_RE.test(e.url)).map((e) => ({ url: e.url, sha256: e.sha256 }));
+  const lazy = entries.filter((e) => LAZY_RE.test(e.url));
   // the worker itself counts too: a changed worker is a new build (a new cache)
   const all = copied.map((url) => url + ':' + sha256(fs.readFileSync(path.join(OUT, url)))).concat(['sw.js:' + sha256(Buffer.from(swSrc))]).sort();
   const buildId = sha256(Buffer.from(all.join('\n'))).slice(0, 16);
-  const manifestText = JSON.stringify({ version: pkg.version, build: buildId, files }, null, 1) + '\n';
+  const manifestText = JSON.stringify({ version: pkg.version, build: buildId, files, lazy }, null, 1) + '\n';
   fs.writeFileSync(path.join(OUT, 'precache-manifest.json'), manifestText);
 
   // 4. the worker carries the build id (a new build = a new cache = the update flow of the editor) and the hash of the manifest: the anchor of its integrity
@@ -109,16 +122,16 @@ function build(opts) {
   const extension = { version: zip.version, sha256: zip.sha256, bytes: zip.bytes, files: zip.files.length };
 
   const bytes = copied.reduce((s, f) => s + fs.statSync(path.join(OUT, f)).size, 0);
-  return { out: OUT, files: copied.length, precached: files.length, build: buildId, version: pkg.version, bytes, extension };
+  return { out: OUT, files: copied.length, precached: files.length, lazy: lazy.length, build: buildId, version: pkg.version, bytes, extension };
 }
 
-module.exports = { build };
+module.exports = { build, LAZY_RE };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
   const outArg = args.indexOf('--out') >= 0 ? args[args.indexOf('--out') + 1] : '';
   const root = path.resolve(__dirname, '..');
   const r = build({ root, out: outArg || path.join(root, '_site') });
-  console.log('built ' + path.relative(process.cwd(), r.out) + ': ' + r.files + ' files (' + r.precached + ' precached), ' + (r.bytes / 1048576).toFixed(1) + ' MB, build ' + r.build + ', version ' + r.version);
+  console.log('built ' + path.relative(process.cwd(), r.out) + ': ' + r.files + ' files (' + r.precached + ' precached, ' + r.lazy + ' on demand), ' + (r.bytes / 1048576).toFixed(1) + ' MB, build ' + r.build + ', version ' + r.version);
   console.log('extension zip: version ' + r.extension.version + ', ' + r.extension.files + ' files, ' + r.extension.bytes + ' bytes, sha256 ' + r.extension.sha256);
 }

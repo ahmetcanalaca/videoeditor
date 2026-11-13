@@ -52,3 +52,13 @@ dialog.ve-msgbox::backdrop { background: var(--scrim); }
 .flw-panel .btn.small { height: 24px; padding: 0 8px; font-size: 11px; }
 .flw-panel a.btn { text-decoration: none; }
 .flw-panel .path-row input[list] { flex: 1 1 auto; }
+
+/* The model choice of the in-browser assistant (js/web/ai/inbrowser/ibpanel.js); its steps are the .flw-step ones above */
+.ibw-models { display: flex; flex-direction: column; gap: 6px; }
+.ibw-model { display: grid; grid-template-columns: 18px minmax(0, 1fr); column-gap: 8px; align-items: start; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }
+.ibw-model:has(input:checked) { border-color: var(--accent); }
+.ibw-model input { margin: 3px 0 0; }
+.ibw-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ibw-name { overflow-wrap: anywhere; }
+.ibw-rec { display: inline-block; padding: 0 6px; border-radius: 8px; background: var(--accent); color: var(--accent-fg); font-size: 10px; font-weight: 700; vertical-align: 1px; }
+.ibw-state { font-size: 11px; color: var(--text-dim); }

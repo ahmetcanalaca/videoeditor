@@ -27,6 +27,13 @@
   const FL_VISION_FRAMES = 60;
   const FL_VISION_MAX_CALLS = 400;
   const FL_CATALOG_MS = 30 * 1000; // how long the list of models is kept (it has a hundred entries and does not change while Foundry Local runs)
+  // The model in this tab (js/web/ai/inbrowser/): it runs on this computer's graphics card, a picture takes a few seconds, and the first request of a session
+  // includes loading the model (a minute or two). Fewer pictures than Foundry Local's discrete-GPU-class figures: an integrated graphics card is the usual case.
+  const IB_TEST_TIMEOUT_MS = 15 * 60 * 1000;
+  const IB_RUN_TIMEOUT_MS = 45 * 60 * 1000;
+  const IB_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+  const IB_VISION_FRAMES = 40;
+  const IB_VISION_MAX_CALLS = 200;
   // the chat models whose adapters pass a picture on (the others - Anthropic, Gemini - read text only, so they are not offered locate_in_video)
   const LOCATE_PROVIDERS = ['foundry', 'azure', 'openai'];
   const SEG_KEYS = ['id', 'mediaId', 'in', 'out', 'speed', 'zoomFrom', 'zoomTo', 'fx', 'fy', 'volume', 'mute', 'fadeIn', 'fadeOut'];
@@ -72,8 +79,8 @@
       // 'entra' = an access token (Microsoft Entra ID) pasted instead of an API key; it travels as "Authorization: Bearer ..."
       auth: o.auth === 'entra' ? 'entra' : 'key',
       baseUrl: str(o.baseUrl, 300),
-      // a Foundry Local model is an id or alias as `foundry model list` shows it (nothing else is ever put into a request path)
-      model: provider === 'foundrylocal' && !K.FL.validId(model) ? '' : model,
+      // a Foundry Local model is an id or alias as `foundry model list` shows it (nothing else is ever put into a request path); an in-browser model is a key of the catalogue
+      model: (provider === 'foundrylocal' && !K.FL.validId(model)) || (provider === 'inbrowser' && !K.IB.known(model)) ? '' : model,
       apiVersion: str(o.apiVersion, 40),
       shareNames: o.shareNames !== false,
       // whether the Foundry Local model that is set up can look at pictures (found out by asking it once; only counts for that very model)
@@ -99,8 +106,8 @@
 
   async function ensure() {
     if (K) return K;
-    const [core, constants, fl] = await Promise.all([import('./desktop-core.js'), import('./constants.js'), import('./fl-local.js')]);
-    K = { core, C: constants.constants, FL: fl };
+    const [core, constants, fl, ib] = await Promise.all([import('./desktop-core.js'), import('./constants.js'), import('./fl-local.js'), import('./inbrowser/ib-client.js')]);
+    K = { core, C: constants.constants, FL: fl, IB: ib };
     // the pairing key of the Local AI helper of earlier versions (a secret for a program that is gone): not kept any longer
     try { localStorage.removeItem('ve.web.ai.helper.v1'); } catch (e) { /* storage not available */ }
     settings = sanitize(readJson(localStorage, LS_SETTINGS));
@@ -131,16 +138,16 @@
   }
 
   function credentialOf(ai) {
-    // Foundry Local takes no key (and a browser extension, not this page, talks to it)
-    if (ai.provider === 'foundrylocal') return 'none';
+    // Foundry Local takes no key (and a browser extension, not this page, talks to it); the model in this tab takes none either (nothing is sent anywhere)
+    if (ai.provider === 'foundrylocal' || ai.provider === 'inbrowser') return 'none';
     if (ai.provider === 'local') return 'optional';
     if (ai.auth === 'entra' && (ai.provider === 'azure' || ai.provider === 'foundry')) return 'entra';
     return 'key';
   }
 
   function effectiveUrl(ai) {
-    // Foundry Local has no address here: the extension finds it, and the page never names one
-    if (ai.provider === 'foundrylocal') return { ok: true, url: '', origin: '', local: true };
+    // Foundry Local has no address here: the extension finds it, and the page never names one; the model in this tab has none either
+    if (ai.provider === 'foundrylocal' || ai.provider === 'inbrowser') return { ok: true, url: '', origin: '', local: true };
     return K.core.net.validateBaseUrl(ai.baseUrl || K.core.providers.DEFAULT_BASE_URLS[ai.provider] || '');
   }
 
@@ -149,7 +156,7 @@
   // go to, so the user says yes once. While a key is being entered (`always`) the user is asked even when the address is on the saved list: every GitHub
   // Pages site of an account shares this browser storage, so another page could have put an address there, and the key is only kept for the tab anyway.
   function endpointNeedsOk(provider, url, always) {
-    if (provider === 'local' || provider === 'foundrylocal' || !url || !url.ok || url.local) return false;
+    if (provider === 'local' || provider === 'foundrylocal' || provider === 'inbrowser' || !url || !url.ok || url.local) return false;
     if (VEW.net.wellKnown.indexOf(url.origin) >= 0) return false;
     return !!always || !VEW.net.trust.has(url.origin);
   }
@@ -174,11 +181,12 @@
   function status() {
     const ai = settings;
     const fl = ai.provider === 'foundrylocal';
+    const ibm = ai.provider === 'inbrowser';
     const url = effectiveUrl(ai);
     const credential = credentialOf(ai);
     const urlError = url.ok ? (ai.provider === 'local' && !url.local ? 'URL_NOT_LOCAL' : '') : url.code;
     // A key is only valid for the endpoint it was entered for: changing the endpoint without a new key must never send it elsewhere.
-    const keyMismatch = !fl && !!vault.key && url.ok && vault.origin !== url.origin;
+    const keyMismatch = !fl && !ibm && !!vault.key && url.ok && vault.origin !== url.origin;
     let needs = null;
     if (credential === 'key' && !vault.key) needs = 'key';
     else if (credential === 'entra' && !vault.key) needs = 'key';
@@ -206,9 +214,9 @@
       // the sign-in with an access token needs no command line tool on this computer
       azCli: true,
       ready: needs === null,
-      // A Foundry Local model that takes pictures looks at the video itself (find_in_video, like in the desktop app). Otherwise a browser has no model that does;
-      // with a Foundry analysis it can still read the video.
-      vision: fl && !!ai.model && ai.flVision.ok && ai.flVision.model === ai.model,
+      // A Foundry Local model that takes pictures looks at the video itself (find_in_video, like in the desktop app); so does every model of the in-browser catalogue
+      // (they all see pictures). Otherwise a browser has no model that does; with a Foundry analysis it can still read the video.
+      vision: (fl && !!ai.model && ai.flVision.ok && ai.flVision.model === ai.model) || (ibm && !!ai.model),
       cu: cuStatus(ai, url, credential, keyMismatch, needs === null),
     };
   }
@@ -260,6 +268,7 @@
   function providerFor(st, opts) {
     const o = opts || {};
     if (st.provider === 'foundrylocal') return flProvider(st.model, o);
+    if (st.provider === 'inbrowser') return ibProvider(st.model, o);
     const origin = effectiveUrl(settings).origin;
     // the key / token is handed out for the address it was entered for only
     const apiKey = st.hasKey && !st.keyMismatch && vault.origin === origin ? vault.key : '';
@@ -306,6 +315,104 @@
     x.arc(32, 32, 18, 0, Math.PI * 2);
     x.fill();
     return c.toDataURL('image/jpeg', 0.85);
+  }
+
+  /* ------------------------------------------------------------------ the model in this tab (js/web/ai/inbrowser/) */
+
+  // The one connection to the two workers (download, engine): made when it is first needed. Tests hand in fake workers.
+  let ibc = null;
+  function ibClient() {
+    if (!ibc) {
+      const hook = VEW.test && window.__veTest ? window.__veTest : null;
+      ibc = K.IB.createClient({ spawn: hook && typeof hook.ibSpawn === 'function' ? hook.ibSpawn : undefined, idleMs: hook && hook.ibIdleMs > 0 ? hook.ibIdleMs : undefined });
+    }
+    return ibc;
+  }
+
+  // what this computer can do does not change while the page is open (a missing service worker is not remembered: it may take control a moment later)
+  let ibSupport = null;
+  async function ibSupported() {
+    if (!ibSupport) {
+      const s = hookSupport() || (await K.IB.support());
+      if (s.ok || s.code !== 'IB_NO_SW') ibSupport = s;
+      return s;
+    }
+    return ibSupport;
+  }
+  function hookSupport() { return VEW.test && window.__veTest && window.__veTest.ibSupport ? window.__veTest.ibSupport : null; }
+
+  // an error of this feature as the adapters' error class, which the assistant's error card explains by its code
+  const ibFailure = (e) => (e && e.name === 'IbError' ? new K.core.providers.AiError(e.code, e.message, { detail: e.detail }) : e);
+
+  // The provider of the assistant for a model in this tab: the desktop code's "local" adapter - the tools are described in the prompt (promptedTools: always) - whose fetch
+  // is answered by the model itself (the address is a placeholder: nothing is ever requested from it). o: { onPhase?(step), signal? }
+  function ibProvider(model, o) {
+    const inner = K.core.providers.createProvider({
+      kind: 'local', baseUrl: 'http://127.0.0.1:5272/v1', model, apiKey: '', promptedTools: 'always', timeoutMs: IB_REQUEST_TIMEOUT_MS,
+      fetch: ibClient().fetchFor(model, { AiError: K.core.providers.AiError, onPhase: o && o.onPhase }),
+    });
+    // A small model that answers in words instead of editing (after the picture search, or "I cut it" with no tool call) is asked once more (followThrough in ib-core.js).
+    // Its answer is only used when it calls a tool; if it still does not, its claim is not passed on as if it were true.
+    return Object.assign({}, inner, {
+      async chat(req) {
+        const reply = await inner.chat(req);
+        const nudge = K.IB.followThrough(req && req.messages, reply, req && req.tools);
+        if (!nudge) return reply;
+        const asked = req.messages.concat([{ role: 'assistant', content: reply.text || '' }, { role: 'user', content: nudge.text }]);
+        const again = await inner.chat(Object.assign({}, req, { messages: asked }));
+        const a = reply.usage;
+        const b = again && again.usage;
+        const usage = a || b ? { input: ((a && a.input) || 0) + ((b && b.input) || 0), output: ((a && a.output) || 0) + ((b && b.output) || 0) } : null;
+        if (again && Array.isArray(again.toolCalls) && again.toolCalls.length) return Object.assign({}, again, { usage });
+        return Object.assign({}, reply, { text: t(nudge.kind === 'found' ? 'ai.ib.foundNoEdit' : 'ai.ib.noEdit'), usage });
+      },
+    });
+  }
+
+  // Is everything in place to run the model? This computer can, and the files are stored. Throws an AiError that says which of the two is missing.
+  async function ibReady(model) {
+    const sup = await ibSupported();
+    if (!sup.ok) throw ibFailure(new K.IB.IbError(sup.code, 'This computer cannot run the model'));
+    let s;
+    try { s = await ibClient().status(); } catch (e) { throw ibFailure(e); }
+    const m = s.models.find((x) => x.key === model);
+    if (!m || !m.installed) throw ibFailure(new K.IB.IbError('IB_NOT_INSTALLED', 'The model is not downloaded'));
+  }
+
+  // The assistant answers a question about a made-up project: a real round through the agent loop with the prompt of a real request, so that the model has read that prompt
+  // once (the decoder state of it is kept for the next request) and the person sees it work. Nothing of the user's project is touched. -> the answer, shortened
+  async function ibSmokeTest(key, signal) {
+    const lang = window.VE.i18n.getLanguage();
+    const exp = {};
+    const enums = K.core.ops.EXPORT_ENUMS;
+    Object.keys(enums).forEach((k) => { exp[k] = enums[k][0]; });
+    const media = { m1: { id: 'm1', name: 'video.mp4', duration: 30, fps: 30, hasAudio: true, displayWidth: 1280, displayHeight: 720 } };
+    const segments = [{ id: 's1', mediaId: 'm1', in: 0, out: 30, speed: 1, zoomFrom: 1, zoomTo: 1, fx: 0.5, fy: 0.5, volume: 1, mute: false, fadeIn: 0, fadeOut: 0 }];
+    const res = await K.core.agent.runAgent({
+      provider: ibProvider(key, { onPhase: () => {} }),
+      prompt: lang === 'en' ? 'How long is the video?' : 'Video ne kadar uzun?',
+      history: [],
+      snapshot: { segments, media, exportSettings: exp, playhead: 0, selectedId: null },
+      lang,
+      shareNames: true,
+      signal,
+      perceptionFactory: () => ({ find: async () => ({ ok: false }) }),
+    });
+    if (!res || !res.ok) {
+      const e = (res && res.error) || { code: 'IB_ENGINE', message: 'The assistant did not answer' };
+      if (e.code === 'ABORTED') throw new K.IB.IbError('ABORTED', 'Cancelled');
+      throw new K.core.providers.AiError(e.code, e.message, { detail: e.detail });
+    }
+    return String(res.message || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  }
+
+  async function confirmDownload(info) {
+    const size = window.VE.util.formatBytes(info.bytes);
+    const choice = await api.messageBox({
+      type: 'question', title: t('app.title'), message: t('ibw.consent.msg', { name: info.name, size }),
+      detail: t('ibw.consent.detail', { repo: info.repo, rev: info.revision.slice(0, 8), size }), buttons: [t('ibw.consent.go'), t('web.trust.cancel')], defaultId: 1, cancelId: 1,
+    });
+    return choice === 0;
   }
 
   /* ------------------------------------------------------------------ the editor's state as the agent sees it */
@@ -400,9 +507,9 @@
     }
   }
 
-  // find_in_video for a Foundry Local model that takes pictures: the desktop app's pipeline (src/main/perception/) with the pictures cut by the browser's own decoder
-  // and the questions asked through the same provider as the chat. The pictures go to Foundry Local on this computer only (through the extension), so - as in the
-  // desktop app - there is nothing to confirm. o: { provider, session, userText, runSignal, runId, getExtractor() -> Promise<extractor> }
+  // find_in_video for a model that takes pictures (Foundry Local, or the one in this tab): the desktop app's pipeline (src/main/perception/) with the pictures cut by the
+  // browser's own decoder and the questions asked through the same provider as the chat. The pictures go to a model on this computer only, so - as in the desktop app -
+  // there is nothing to confirm. o: { provider, session, userText, runSignal, runId, getExtractor() -> Promise<extractor>, maxFrames?, maxCalls? }
   function makePerception(o) {
     try {
       return K.core.perception.createPerception({
@@ -411,10 +518,10 @@
         ffmpegPath: 'browser',
         procs: null,
         extract: async (req) => (await o.getExtractor()).extract(req),
-        vlm: K.core.perceptionCloudVlm.createCloudVlm({ provider: o.provider, maxCalls: FL_VISION_MAX_CALLS }),
+        vlm: K.core.perceptionCloudVlm.createCloudVlm({ provider: o.provider, maxCalls: o.maxCalls || FL_VISION_MAX_CALLS }),
         userText: o.userText,
         signal: o.runSignal,
-        maxFrames: FL_VISION_FRAMES,
+        maxFrames: o.maxFrames || FL_VISION_FRAMES,
         onProgress: (p) => VEW.emit('ai:step', Object.assign({ runId: o.runId, kind: 'search' }, p)),
         log: () => {},
       });
@@ -437,6 +544,14 @@
     const r = req && typeof req === 'object' ? req : {};
     if (!K.C.AI_PROVIDERS.includes(r.provider)) return fail('BAD_PROVIDER');
     const provider = r.provider;
+    // the model in this tab has no address, key or video analysis: the model (a key of the catalogue) is all there is to save
+    if (provider === 'inbrowser') {
+      const model = typeof r.model === 'string' ? r.model.trim() : '';
+      if (model && !K.IB.known(model)) return fail('IB_BAD_MODEL');
+      settings = sanitize(Object.assign({}, settings, { provider, baseUrl: '', apiVersion: '', auth: 'key', model, shareNames: r.shareNames !== false, cu: { enabled: false, endpoint: '', analyzer: K.C.CU_DEFAULT_ANALYZER, location: 'geography' } }));
+      saveSettings();
+      return { ok: true, keyCleared: false, status: status() };
+    }
     // Foundry Local has no address, key or video analysis here: the model (as Foundry Local names it) is all there is to save; the extension finds the server
     if (provider === 'foundrylocal') {
       const model = typeof r.model === 'string' ? r.model.trim() : '';
@@ -532,6 +647,13 @@
       const used = await flUse({ model: st.model, shareNames: st.shareNames });
       return used.ok ? { ok: true, models: [], modelOk: true, vision: used.vision, modelId: used.modelId } : used;
     }
+    // the model in this tab: the same as "download and use" - the files, the model in memory, a question answered
+    if (st.provider === 'inbrowser') {
+      if (!st.model) return fail('NOT_CONFIGURED');
+      const used = await ibUse({ model: st.model, shareNames: st.shareNames });
+      if (used.ok) return { ok: true, models: [], modelOk: true, vision: true, modelId: used.modelId };
+      return used.cancelled ? fail('ABORTED') : used;
+    }
     if (st.needs === 'key') return fail('NO_KEY');
     if (st.urlError) return fail(st.urlError);
     if (st.needs === 'mismatch') return fail('KEY_MISMATCH');
@@ -572,8 +694,9 @@
     if (snapshot.error) return fail(snapshot.error);
     const controller = new AbortController();
     const fl = st.provider === 'foundrylocal';
+    const ibm = st.provider === 'inbrowser';
     // the time limit of the request; it stands still while a video is being analysed (see makeAnalysis)
-    const budget = { left: fl ? FL_RUN_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS), since: 0, timer: null };
+    const budget = { left: fl ? FL_RUN_TIMEOUT_MS : (ibm ? IB_RUN_TIMEOUT_MS : (st.provider === 'local' ? LOCAL_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS)), since: 0, timer: null };
     const arm = () => { budget.since = Date.now(); budget.timer = setTimeout(() => controller.abort(), Math.max(1000, budget.left)); };
     const disarm = () => { clearTimeout(budget.timer); budget.left -= Date.now() - budget.since; };
     arm();
@@ -584,9 +707,12 @@
     // the pictures come from the browser's own decoder; made when they are first needed
     const getExtractor = () => extractorLoad || (extractorLoad = import('./web-frames.js').then((frames) => { extractor = frames.createFrameExtractor((id) => VEW.getMedia(id)); return extractor; }));
     try {
-      // Foundry Local: say at once which of extension / approval / server is missing (instead of waiting for a request that nobody answers)
+      // Foundry Local: say at once which of extension / approval / server is missing (instead of waiting for a request that nobody answers); the model in this tab: that
+      // this computer can run it and the files are there
       if (fl) await flReady();
-      const provider = providerFor(st, fl ? { onPhase: (phase) => VEW.emit('ai:step', { runId, kind: 'phase', phase }), signal: controller.signal } : undefined);
+      if (ibm) await ibReady(st.model);
+      const ibPhase = (p) => VEW.emit('ai:step', Object.assign({ runId, kind: 'phase', phase: 'ibload' }, p));
+      const provider = providerFor(st, fl ? { onPhase: (phase) => VEW.emit('ai:step', { runId, kind: 'phase', phase }), signal: controller.signal } : (ibm ? { onPhase: ibPhase, signal: controller.signal } : undefined));
       const prompt = String(r.prompt || '');
       let analysisFactory;
       if (st.cu && st.cu.ready) {
@@ -604,14 +730,15 @@
       return await K.core.agent.runAgent({
         provider,
         prompt: r.prompt,
-        history: r.history,
+        // a small model copies the way earlier answers were written (in words, no tool call): the model in this tab gets every request on its own, with the timeline as it is now
+        history: ibm ? [] : r.history,
         snapshot,
         lang: window.VE.i18n.getLanguage(),
         shareNames: st.shareNames,
         signal: controller.signal,
         onStep: (step) => VEW.emit('ai:step', Object.assign({ runId }, step)),
-        // a Foundry Local model that takes pictures looks at the video itself (find_in_video)
-        perceptionFactory: fl && st.vision ? (session) => makePerception({ provider, session, userText: prompt, runSignal: controller.signal, runId, getExtractor }) : undefined,
+        // a model that takes pictures (Foundry Local, or the one in this tab) looks at the video itself (find_in_video)
+        perceptionFactory: (fl || ibm) && st.vision ? (session) => makePerception({ provider, session, userText: prompt, runSignal: controller.signal, runId, getExtractor, maxFrames: ibm ? IB_VISION_FRAMES : FL_VISION_FRAMES, maxCalls: ibm ? IB_VISION_MAX_CALLS : FL_VISION_MAX_CALLS }) : undefined,
         analysisFactory,
         locatorFactory,
       });
@@ -696,6 +823,100 @@
     cuCache = { files: 0, bytes: 0 };
     return { ok: true, removed, status: status() };
   }
+
+  /* ------------------------------------------------------------------ api.ib: the model in this tab (the panel of the settings dialog) */
+
+  // What the panel shows: can this computer run it, which models there are, what is stored in the browser, what is in memory. Quick: nothing is downloaded or loaded.
+  async function ibState() {
+    await ensure();
+    const sup = await ibSupported();
+    const out = { ok: true, support: sup, catalog: K.IB.catalog(), recommended: K.IB.recommend(sup), models: [], storage: { usage: 0, quota: 0, persisted: false }, loaded: '', loading: '', installing: '', current: settings.provider === 'inbrowser' ? settings.model : '' };
+    if (!sup.ok) return out;
+    try {
+      const s = await ibClient().status();
+      out.models = s.models;
+      out.storage = s.storage;
+      out.installing = s.installing;
+      out.loaded = s.loaded;
+    } catch (e) {
+      out.error = (e && e.code) || 'IB_WORKER';
+    }
+    out.loading = ibClient().loading();
+    return out;
+  }
+
+  // "Download and use": the files (after the user said yes, in a dialog that says where from and what is stored), the model in memory, the assistant tried once, and
+  // only then remembered. r: { model, onProgress?({ phase: download | read | init | warm | test, loaded?, total?, index?, count? }), shareNames? }
+  // -> { ok, modelId, vision, reply, status } | { ok: false, error } | { ok: false, cancelled: true }
+  async function ibUse(req) {
+    await ensure();
+    const r = req && typeof req === 'object' ? req : {};
+    const key = typeof r.model === 'string' ? r.model : '';
+    if (!K.IB.known(key)) return fail('IB_BAD_MODEL');
+    if (active) return fail('BUSY');
+    const progress = typeof r.onProgress === 'function' ? r.onProgress : () => {};
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), IB_TEST_TIMEOUT_MS);
+    active = { controller };
+    try {
+      const sup = await ibSupported();
+      if (!sup.ok) return fail(sup.code);
+      const c = ibClient();
+      const stored = (await c.status()).models.find((m) => m.key === key);
+      if (!stored || !stored.installed) {
+        // the limit of this whole step does not run while the person reads the dialog or the files come in (a big download can take longer)
+        clearTimeout(timer);
+        if (!(await confirmDownload(K.IB.catalog().find((m) => m.key === key)))) return { ok: false, cancelled: true };
+        await c.install(key, { signal: controller.signal, onProgress: (p) => progress({ phase: 'download', loaded: p.loaded, total: p.total, index: p.index, count: p.count }) });
+      }
+      const loadTimer = setTimeout(() => controller.abort(), IB_TEST_TIMEOUT_MS);
+      try {
+        await c.ensureLoaded(key, { signal: controller.signal, onProgress: (m) => progress({ phase: m.phase, loaded: m.loaded, total: m.total }) });
+        progress({ phase: 'test' });
+        const reply = await ibSmokeTest(key, controller.signal);
+        settings = sanitize(Object.assign({}, settings, { provider: 'inbrowser', baseUrl: '', apiVersion: '', auth: 'key', model: key, shareNames: r.shareNames !== false, cu: { enabled: false, endpoint: '', analyzer: K.C.CU_DEFAULT_ANALYZER, location: 'geography' } }));
+        saveSettings();
+        return { ok: true, modelId: key, vision: true, reply, status: status() };
+      } finally {
+        clearTimeout(loadTimer);
+      }
+    } catch (e) {
+      if (e && e.code === 'ABORTED') return { ok: false, cancelled: true };
+      return { ok: false, error: K.core.agent.aiErrorInfo(ibFailure(e)) };
+    } finally {
+      clearTimeout(timer);
+      active = null;
+    }
+  }
+
+  // "Delete download": the files of one model go out of the browser's storage (after a question)
+  async function ibRemove(req) {
+    await ensure();
+    const r = req && typeof req === 'object' ? req : {};
+    const key = typeof r.model === 'string' ? r.model : '';
+    if (!K.IB.known(key)) return fail('IB_BAD_MODEL');
+    if (active) return fail('BUSY');
+    const info = K.IB.catalog().find((m) => m.key === key);
+    const choice = await api.messageBox({ type: 'question', title: t('app.title'), message: t('ibw.remove.msg', { name: info.name }), detail: t('ibw.remove.detail'), buttons: [t('ibw.remove.go'), t('web.trust.cancel')], defaultId: 1, cancelId: 1 });
+    if (choice !== 0) return { ok: false, cancelled: true };
+    try {
+      await ibClient().remove(key);
+      // the assistant was set up with this model: it is not any more
+      if (settings.provider === 'inbrowser' && settings.model === key) { settings = sanitize(Object.assign({}, settings, { model: '' })); saveSettings(); }
+      return { ok: true, status: status() };
+    } catch (e) {
+      return { ok: false, error: K.core.agent.aiErrorInfo(ibFailure(e)) };
+    }
+  }
+
+  // "Free memory": the model leaves the graphics card and the memory (the engine worker ends); the files stay
+  async function ibUnload() {
+    await ensure();
+    ibClient().unload();
+    return { ok: true };
+  }
+
+  api.ib = { state: ibState, use: ibUse, remove: ibRemove, unload: ibUnload };
 
   /* ------------------------------------------------------------------ api.fl: the setup of Foundry Local (the panel of the settings dialog) */
 

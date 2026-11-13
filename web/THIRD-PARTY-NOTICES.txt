@@ -3,8 +3,9 @@ Video Editör (web edition) - third-party components
 
 The web edition is MIT-licensed (see LICENSE). That licence covers the source code of this repository (the desktop application in src/ and the web edition in
 web/); third-party components keep their own licences: those of the web edition are listed below, those of the desktop build (FFmpeg, llama.cpp, the models) in
-THIRD-PARTY-NOTICES.txt at the root of the repository. The web edition loads no code from any CDN: every library below is copied, unmodified, from its npm
-package into web/vendor/ and pinned by SHA-256 in web/vendor/vendor-lock.json (checked on every build, `node scripts/vendor.js verify`).
+THIRD-PARTY-NOTICES.txt at the root of the repository. The web edition loads no code from any CDN: every library below is copied from its npm
+package into web/vendor/ - unmodified, except the one change named under transformers.js - and pinned by SHA-256 in web/vendor/vendor-lock.json (checked on every build,
+`node scripts/vendor.js verify`).
 
 
 Mediabunny 1.65.1 - Mozilla Public License 2.0
@@ -13,3 +14,34 @@ Mediabunny 1.65.1 - Mozilla Public License 2.0
   Source: https://github.com/Vanilagy/mediabunny  (the complete corresponding source of this exact version is the tag v1.65.1 of that repository)
   Licence text: vendor/mediabunny/LICENSE
   Copyright (c) Vanilagy
+
+
+transformers.js 4.3.2 (npm package "@huggingface/transformers") - Apache License 2.0
+  Used for: running the in-browser AI model (tokenizer, chat template, the model's decoder loop) in a worker of the page, on the graphics card (WebGPU).
+  File: vendor/transformers/transformers.min.js (the build "dist/transformers.min.js" of the npm package, MODIFIED in one way; loaded from this site only, on demand)
+  Change (Apache License 2.0, section 4(b)): in the three places where the model class for Mistral 3 is named, an underscore follows "Mistral3For" (upstream has none),
+  so that code scanners do not read the model type and its 32-letter class name as an API key. The class is not used by this site. A notice in the first lines of the
+  file says so. The change is declared in vendor/vendor-manifest.json ("patches"); vendor/vendor-lock.json holds the SHA-256 of the official file and of this one, and
+  `node scripts/vendor.js verify` proves that this file is the official one plus exactly that change (`node scripts/vendor.js add` makes it from the official package).
+  Source: https://github.com/huggingface/transformers.js
+  Licence text: vendor/transformers/LICENSE
+  Copyright (c) Hugging Face
+  The same bundle contains the code of other libraries that are named in the package's dependencies: "@huggingface/jinja" (MIT, Copyright (c) 2023 Hugging Face;
+  licence text: vendor/transformers/LICENSE-jinja), "@huggingface/tokenizers" (Apache License 2.0, the text of vendor/transformers/LICENSE applies) and the JavaScript part
+  of ONNX Runtime Web ("onnxruntime-common" / "onnxruntime-web", MIT, see below).
+
+
+ONNX Runtime Web 1.31.0-dev.20260914-8d85527a0 (npm package "onnxruntime-web") - MIT License
+  Used for: the WebAssembly runtime that transformers.js runs the model with (the graphics card is driven through WebGPU from it).
+  Files: vendor/onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs and vendor/onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm (unmodified; loaded from this site only, on demand)
+  Source: https://github.com/microsoft/onnxruntime at the commit in vendor/onnxruntime-web/COMMIT.txt (8d85527a010e294a26b274749f74294b2a32cec5)
+  Licence text: vendor/onnxruntime-web/LICENSE (the file of that commit; the npm package carries none, so the build fetches it by its pinned SHA-256, see scripts/vendor.js)
+  Copyright (c) Microsoft Corporation
+
+
+AI models of the in-browser assistant - NOT part of this site
+  The model files are not stored in this repository or served by this site: the page downloads them from Hugging Face after the person agreed to it (see SECURITY.md,
+  "AI in the browser"). They are pinned to a commit and checked by SHA-256 in js/web/ai/inbrowser/ib-models.js.
+    Qwen3.5 2B and 4B - Apache License 2.0 - Copyright Alibaba Cloud (Qwen team): https://huggingface.co/Qwen
+    ONNX conversions (4-bit weights, 16-bit activations): onnx-community/Qwen3.5-2B-ONNX-OPT and webgpu/Qwen3.5-4B-ONNX (Hugging Face)
+  A model is data that can be wrong, can be biased and can make things up: check what the assistant did to your timeline (it is one undo step).

@@ -12,7 +12,7 @@
   };
   VE.web = {
     edition: 'web',
-    version: '4.3.0',
+    version: '4.4.0',
     mediabunnyVersion: '1.65.1',
     caps: caps,
     // set by api.js once files are imported (object URLs of the picked files and of the generated thumbnails)
